@@ -1,0 +1,66 @@
+:root {
+  --bg: #fbf8f2; --ink: #1d1b16; --muted: #6b665c; --card: #fff;
+  --brand: #e2572b; --brand-ink: #fff; --accent: #2f7a4a; --line: #e7e1d5;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font: 16px/1.55 system-ui, sans-serif; background: var(--bg); color: var(--ink); }
+a { color: inherit; }
+h1, h2, h3 { line-height: 1.15; margin: 0 0 .5em; }
+h2 { font-size: 2rem; }
+
+.nav { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;
+  padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--card); position: sticky; top: 0; z-index: 9; }
+.nav nav { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+.nav nav a { text-decoration: none; font-weight: 500; }
+.logo { font-weight: 800; font-size: 1.3rem; text-decoration: none; }
+.logo span { color: var(--brand); }
+
+.btn { display: inline-block; background: var(--brand); color: var(--brand-ink) !important; border: 0; border-radius: 999px;
+  padding: 8px 18px; font: inherit; font-weight: 600; text-decoration: none; cursor: pointer; }
+.btn.ghost { background: transparent; color: var(--ink) !important; border: 1.5px solid var(--ink); }
+.btn.big { padding: 12px 26px; font-size: 1.05rem; }
+.btn:disabled { opacity: .6; cursor: wait; }
+
+.hero { padding: 90px 20px 70px; text-align: center;
+  background: radial-gradient(circle at 20% 20%, #ffd9c7, transparent 50%), radial-gradient(circle at 80% 70%, #cfe9d6, transparent 50%); }
+.hero h1 { font-size: clamp(2.6rem, 8vw, 5rem); letter-spacing: -.02em; }
+.hero p { font-size: 1.2rem; color: var(--muted); max-width: 520px; margin: 0 auto 28px; }
+
+.section { max-width: 1000px; margin: 0 auto; padding: 56px 20px; }
+.narrow { max-width: 640px; }
+.row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; justify-content: center; }
+.section .row { justify-content: flex-start; margin-bottom: 16px; }
+.row.between { justify-content: space-between; }
+.grid { display: grid; gap: 20px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 24px; }
+.card strong { color: var(--brand); }
+
+.menu { list-style: none; padding: 0; margin: 0; display: grid; gap: 0 40px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.menu li { display: flex; justify-content: space-between; gap: 12px; padding: 14px 0; border-bottom: 1px dashed var(--line); }
+.menu small { display: block; color: var(--muted); }
+.menu span { font-weight: 600; white-space: nowrap; }
+
+label, .label { display: block; font-weight: 600; margin: 18px 0 8px; }
+input { display: block; width: 100%; margin-top: 6px; padding: 10px 12px; font: inherit; border: 1.5px solid var(--line);
+  border-radius: 10px; background: var(--card); }
+.row input { width: auto; margin: 0; }
+input:focus-visible, button:focus-visible { outline: 3px solid var(--brand); outline-offset: 2px; }
+
+.tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.tabs button, .slots button { font: inherit; padding: 12px; border-radius: 12px; border: 1.5px solid var(--line);
+  background: var(--card); cursor: pointer; }
+.tabs small { display: block; color: var(--muted); }
+.tabs .active, .slots .active { border-color: var(--brand); background: #fff1eb; font-weight: 700; }
+.slots { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); }
+.slots button:disabled { opacity: .35; text-decoration: line-through; cursor: not-allowed; }
+.form .btn { margin-top: 20px; width: 100%; }
+.ok { color: var(--accent); font-weight: 600; }
+.err { color: #c0262d; font-weight: 600; }
+
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; background: var(--card); font-size: .95rem; }
+th, td { text-align: left; padding: 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { background: #f3eee4; }
+.link-danger { background: none; border: 0; color: #c0262d; cursor: pointer; font: inherit; text-decoration: underline; }
+
+.footer { text-align: center; padding: 30px; color: var(--muted); border-top: 1px solid var(--line); }
