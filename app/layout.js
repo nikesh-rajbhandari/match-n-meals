@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { SpeedInsights } from '@vercel/speed-insights/next';
 import './globals.css';
 
 export const metadata = {
@@ -20,6 +21,7 @@ export default function RootLayout({ children }) {
           </nav>
         </header>
         <main>{children}</main>
+        <SpeedInsights />
         <footer className="footer">© {new Date().getFullYear()} Match &amp; Meals</footer>
       </body>
     </html>
