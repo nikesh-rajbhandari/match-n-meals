@@ -1,6 +1,7 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { COURTS, PRICE, hours, fmtHour } from '@/lib/config';
+import Loading from '@/app/loading';
 
 const today = () => new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD, local
 
@@ -12,12 +13,21 @@ export default function Book() {
   const [msg, setMsg] = useState(null);
   const [busy, setBusy] = useState(false);
 
+  const req = useRef(0);
+
+  // preselect court from /book?court=basketball (links on the home page)
+  useEffect(() => {
+    const c = new URLSearchParams(location.search).get('court');
+    if (COURTS[c]) setCourt(c);
+  }, []);
+
   const load = () => {
+    const id = ++req.current; // ignore responses for a court/date the user already left
     setTaken(null);
     fetch(`/api/bookings?court=${court}&date=${date}`)
       .then((r) => r.json())
-      .then((d) => setTaken(d.taken ?? []))
-      .catch(() => setTaken([]));
+      .then((d) => id === req.current && setTaken(d.taken ?? []))
+      .catch(() => id === req.current && setTaken([]));
   };
   useEffect(() => { setHour(null); load(); }, [court, date]);
 
@@ -62,7 +72,7 @@ export default function Book() {
       </label>
 
       <p className="label">Time (1 hour)</p>
-      {taken === null ? <p>Loading availability…</p> : (
+      {taken === null ? <Loading /> : (
         <div className="slots">
           {hours().map((h) => {
             const off = taken.includes(h) || h <= nowHour;

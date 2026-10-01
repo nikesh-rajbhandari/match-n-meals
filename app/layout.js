@@ -15,7 +15,7 @@ export default function RootLayout({ children }) {
           <Link href="/" className="logo">Match <span>&amp;</span> Meals</Link>
           <nav>
             <Link href="/#courts">Courts</Link>
-            <Link href="/#menu">Menu</Link>
+            <Link href="/#menu">Kitchen</Link>
             <Link href="/#visit">Visit</Link>
             <Link href="/book" className="btn">Book a court</Link>
           </nav>
