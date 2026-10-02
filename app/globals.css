@@ -1,6 +1,6 @@
 :root {
   --bg: #fbf8f2; --ink: #1d1b16; --muted: #6b665c; --card: #fff;
-  --brand: #e2572b; --brand-ink: #fff; --accent: #2f7a4a; --line: #e7e1d5;
+  --brand: #557a5c; --brand-ink: #fff; --accent: #2f4a36; --tint: #e8efe5; --line: #e7e1d5;
 }
 * { box-sizing: border-box; }
 body { margin: 0; font: 16px/1.55 system-ui, sans-serif; background: var(--bg); color: var(--ink); }
@@ -22,7 +22,7 @@ h2 { font-size: 2rem; }
 .btn:disabled { opacity: .6; cursor: wait; }
 
 .hero { padding: 90px 20px 70px; text-align: center;
-  background: radial-gradient(circle at 20% 20%, #ffd9c7, transparent 50%), radial-gradient(circle at 80% 70%, #cfe9d6, transparent 50%); }
+  background: radial-gradient(circle at 20% 20%, #d5e3d0, transparent 50%), radial-gradient(circle at 80% 70%, #eef0dc, transparent 50%); }
 .hero h1 { font-size: clamp(2.6rem, 8vw, 5rem); letter-spacing: -.02em; }
 .hero p { font-size: 1.2rem; color: var(--muted); max-width: 520px; margin: 0 auto 28px; }
 
@@ -56,11 +56,11 @@ input:focus-visible, button:focus-visible { outline: 3px solid var(--brand); out
 .tabs button, .slots button { font: inherit; padding: 12px; border-radius: 12px; border: 1.5px solid var(--line);
   background: var(--card); cursor: pointer; }
 .tabs small { display: block; color: var(--muted); }
-.tabs .active, .slots .active { border-color: var(--brand); background: #fff1eb; font-weight: 700; }
+.tabs .active, .slots .active { border-color: var(--brand); background: var(--tint); font-weight: 700; }
 .slots { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); }
-.slots button:disabled { opacity: .35; text-decoration: line-through; cursor: not-allowed; }
+.slots button:disabled { opacity: .45; cursor: not-allowed; background: #f3eee4; }
+.slots small { display: block; font-size: .75rem; color: var(--muted); }
 .form .btn { margin-top: 20px; width: 100%; }
-.ok { color: var(--accent); font-weight: 600; }
 .err { color: #c0262d; font-weight: 600; }
 
 .table-wrap { overflow-x: auto; }
@@ -91,3 +91,20 @@ th { background: #f3eee4; }
   .loader-ring img { animation: none; }
   .loader-ring img:first-child { opacity: 1; }
 }
+
+.popup { border: 0; border-radius: 20px; padding: 0; width: min(400px, calc(100% - 32px)); background: var(--card); color: var(--ink);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .25); }
+.popup::backdrop { background: rgba(29, 27, 22, .55); backdrop-filter: blur(3px); }
+.popup[open] { animation: pop .25s ease-out; }
+@keyframes pop { from { opacity: 0; transform: translateY(12px) scale(.96); } }
+.popup-body { padding: 28px 28px 24px; text-align: center; }
+.popup-body img { display: block; margin: 0 auto 4px; }
+.popup-body h2 { font-size: 1.6rem; margin-bottom: .2em; }
+.popup-body > p { color: var(--muted); margin: 0 0 16px; }
+.popup dl { display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; text-align: left; margin: 0;
+  background: var(--bg); border-radius: 12px; padding: 14px 18px; }
+.popup dt { color: var(--muted); }
+.popup dd { margin: 0; font-weight: 600; text-align: right; }
+.popup .note { margin: 14px 0 0; font-size: .9rem; }
+.popup .btn { width: 100%; margin-top: 16px; }
+@media (prefers-reduced-motion: reduce) { .popup[open] { animation: none; } }

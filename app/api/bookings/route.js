@@ -1,5 +1,5 @@
 import { sql } from '@/lib/db';
-import { COURTS, OPEN_HOUR, CLOSE_HOUR } from '@/lib/config';
+import { COURTS, OPEN_HOUR, CLOSE_HOUR, TZ } from '@/lib/config';
 
 const isDate = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d) && !isNaN(Date.parse(d));
 
@@ -20,8 +20,7 @@ export async function POST(req) {
   const phone = String(b.phone ?? '').trim();
   const email = String(b.email ?? '').trim() || null;
   const hour = Number(b.hour);
-  // ponytail: "today" is server (UTC) date; set TZ env on Vercel if that's off by a day for you
-  const today = new Date().toISOString().slice(0, 10);
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: TZ });
 
   if (!COURTS[b.court]) return bad('Pick a court');
   if (!isDate(b.date) || b.date < today) return bad('Pick a valid date');

@@ -2,7 +2,7 @@ import { cookies } from 'next/headers';
 import { revalidatePath } from 'next/cache';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { sql } from '@/lib/db';
-import { COURTS, fmtHour } from '@/lib/config';
+import { COURTS, fmtHour, TZ } from '@/lib/config';
 
 export const dynamic = 'force-dynamic';
 
@@ -54,7 +54,11 @@ export default async function Admin({ searchParams }) {
     ? await sql`select *, date::text as day from bookings where date = ${date} order by hour, court`
     : all
       ? await sql`select *, date::text as day from bookings order by date desc, hour limit 500`
-      : await sql`select *, date::text as day from bookings where date >= current_date order by date, hour, court limit 500`;
+      // upcoming = slot hasn't ended yet, in business local time
+      : await sql`select *, date::text as day from bookings
+                  where date + (hour + 1) * interval '1 hour' > now() at time zone ${TZ}
+                  order by date, hour, court limit 500`;
+  const view = date ? 'date' : all ? 'all' : 'upcoming';
 
   return (
     <section className="section">
@@ -65,10 +69,10 @@ export default async function Admin({ searchParams }) {
       <form className="row">
         <input type="date" name="date" defaultValue={date ?? ''} />
         <button className="btn">Filter</button>
-        <a href="/admin" className="btn ghost">Upcoming</a>
-        <a href="/admin?all=1" className="btn ghost">All</a>
+        <a href="/admin" className={`btn ${view === 'upcoming' ? '' : 'ghost'}`}>Upcoming</a>
+        <a href="/admin?all=1" className={`btn ${view === 'all' ? '' : 'ghost'}`}>All</a>
       </form>
-      <p>{rows.length} booking(s)</p>
+      <p>{`${rows.length} ${view === 'upcoming' ? 'upcoming ' : ''}booking(s)${date ? ` on ${date}` : ''}`}</p>
       <div className="table-wrap">
         <table>
           <thead>
@@ -83,7 +87,7 @@ export default async function Admin({ searchParams }) {
                 <td>{r.name}</td>
                 <td><a href={`tel:${r.phone}`}>{r.phone}</a></td>
                 <td>{r.email}</td>
-                <td>{new Date(r.created_at).toLocaleString()}</td>
+                <td>{new Date(r.created_at).toLocaleString('en-US', { timeZone: TZ, dateStyle: 'medium', timeStyle: 'short' })}</td>
                 <td>
                   <form action={cancel}>
                     <input type="hidden" name="id" value={r.id} />
