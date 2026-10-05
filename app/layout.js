@@ -25,11 +25,6 @@ export default function RootLayout({ children }) {
         <a href="#main" className="skip">Skip to content</a>
         <header className="nav">
           <Link href="/" className="logo" translate="no">Match <span>&amp;</span> Meals</Link>
-          <nav aria-label="Main">
-            <Link href="/#courts">Courts</Link>
-            <Link href="/#visit">Hours</Link>
-            <Link href="/#book" className="btn">Book a Court</Link>
-          </nav>
         </header>
         <main id="main">{children}</main>
         <SpeedInsights />

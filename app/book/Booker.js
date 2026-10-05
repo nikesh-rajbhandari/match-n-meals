@@ -1,21 +1,16 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { COURTS, PRICE, TZ, hours, fmtHour } from '@/lib/config';
+import { COURTS, PRICE, hours, fmtHour } from '@/lib/config';
+import { today, hourNow, isDate, addDays, dayLabel, longDate, weekOf } from '@/lib/dates';
 import Icon from '@/app/Icon';
-
-const today = () => new Date().toLocaleDateString('en-CA', { timeZone: TZ }); // YYYY-MM-DD at the venue
-const hourNow = () => Number(new Date().toLocaleString('en-US', { timeZone: TZ, hour: 'numeric', hourCycle: 'h23' }));
-const addDays = (d, n) => new Date(Date.parse(`${d}T00:00Z`) + n * 864e5).toISOString().slice(0, 10);
-const dayLabel = (d, opts) => new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', ...opts }).format(new Date(`${d}T00:00Z`));
-const longDate = (d) => dayLabel(d, { weekday: 'long', month: 'long', day: 'numeric' });
-const isDate = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d ?? '');
+import PayDeposit from './PayDeposit';
 
 export default function Booker() {
   const [court, setCourt] = useState('pickleball');
   const [t, setT] = useState(null); // venue "today"; set after mount so the static HTML never bakes in the build date
   const [date, setDate] = useState(null);
   const [hour, setHour] = useState(null);
-  const [taken, setTaken] = useState(null);
+  const [taken, setTaken] = useState(null); // null (loading) | 'error' | { taken: [hours], held: [hours] }
   const [error, setError] = useState(null);
   const [done, setDone] = useState(null); // last successful request, shown in the popup
   const [busy, setBusy] = useState(false);
@@ -36,9 +31,9 @@ export default function Booker() {
     const id = ++req.current; // ignore responses for a court/date the user already left
     setTaken(null);
     fetch(`/api/bookings?court=${court}&date=${date}`)
-      .then((r) => r.json())
-      .then((d) => id === req.current && setTaken(d.taken ?? []))
-      .catch(() => id === req.current && setTaken([]));
+      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then((d) => id === req.current && setTaken({ taken: d.taken ?? [], held: d.held ?? [] }))
+      .catch(() => id === req.current && setTaken('error')); // never show slots as free when we couldn't check
   };
   useEffect(() => {
     if (!date) return;
@@ -48,7 +43,8 @@ export default function Booker() {
     history.replaceState(null, '', `${location.pathname}?${q}${location.hash}`);
   }, [court, date]);
 
-  const week = t ? Array.from({ length: 7 }, (_, i) => addDays(t, i)) : [];
+  // the strip shows the 7-day block (counted from today) that holds the selected date
+  const { offset, start, days: week } = t && date ? weekOf(t, date) : { offset: 0, start: null, days: [] };
   const nowHour = date === t ? hourNow() : -1;
   const open = hours().filter((h) => h > nowHour); // hide today's past slots
 
@@ -65,7 +61,7 @@ export default function Booker() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        setDone({ court, date, hour, name: form.name, phone: form.phone });
+        setDone({ court, date, hour, name: form.name, phone: form.phone, ref: data.ref });
         e.target.reset();
         setHour(null);
       } else {
@@ -82,24 +78,35 @@ export default function Booker() {
     <div className="booker">
       <div className="seg" role="group" aria-label="Court">
         {Object.entries(COURTS).map(([k, label]) => (
-          <button key={k} type="button" aria-pressed={court === k} onClick={() => setCourt(k)}>
+          <button key={k} type="button" data-court={k} aria-pressed={court === k} onClick={() => setCourt(k)}>
             <Icon name={k} />
             {label}
           </button>
         ))}
       </div>
 
-      <p className="label" id="day-label">Day</p>
+      <div className="week-head">
+        <p className="label" id="day-label">Day</p>
+        {t && (
+          <div className="week-nav">
+            <span className="range">{dayLabel(start, { month: 'short', day: 'numeric' })} - {dayLabel(week[6], { month: 'short', day: 'numeric' })}</span>
+            {offset > 0 && <button type="button" className="today" onClick={() => setDate(t)}>Today</button>}
+            <button type="button" aria-label="Previous week" disabled={offset === 0}
+              onClick={() => setDate(offset === 7 ? t : addDays(start, -7))}><span aria-hidden="true">←</span></button>
+            <button type="button" aria-label="Next week" onClick={() => setDate(addDays(start, 7))}><span aria-hidden="true">→</span></button>
+          </div>
+        )}
+      </div>
       <div className="days" role="group" aria-labelledby="day-label">
         {t ? week.map((d, i) => (
           <button key={d} type="button" aria-pressed={date === d} aria-label={longDate(d)} onClick={() => setDate(d)}>
-            <small>{i === 0 ? 'Today' : dayLabel(d, { weekday: 'short' })}</small>
+            <small>{d === t ? 'Today' : dayLabel(d, { weekday: 'short' })}</small>
             <strong>{dayLabel(d, { day: 'numeric' })}</strong>
           </button>
         )) : Array.from({ length: 7 }, (_, i) => <span key={i} className="skeleton day" />)}
       </div>
-      <label className="other-day">Another date
-        <input type="date" name="date" value={date ?? ''} min={t ?? undefined} onChange={(e) => e.target.value && setDate(e.target.value)} />
+      <label className="other-day">Jump to date
+        <input type="date" name="date" value={date ?? ''} min={t ?? undefined} onChange={(e) => e.target.value >= t && setDate(e.target.value)} />
       </label>
 
       <p className="label">Time <span className="muted">· 1&nbsp;hour, {PRICE[court]}</span></p>
@@ -108,16 +115,20 @@ export default function Booker() {
           <div className="slots" aria-busy="true" aria-label="Loading times…">
             {open.map((h) => <span key={h} className="skeleton" />)}
           </div>
+        ) : taken === 'error' ? (
+          <p className="empty" role="alert">Couldn’t load the times. Check your connection and{' '}
+            <button type="button" className="link-btn" onClick={load}>try again</button>.</p>
         ) : open.length === 0 ? (
           <p className="empty">We’re closed for today. Pick another day above.</p>
         ) : (
           <div className="slots" role="group" aria-label="Start time">
             {open.map((h) => {
-              const booked = taken.includes(h);
+              // held = someone requested it and owes the deposit; it may free up again
+              const label = taken.taken.includes(h) ? 'Taken' : taken.held.includes(h) ? 'On hold' : null;
               return (
-                <button key={h} type="button" disabled={booked} aria-pressed={hour === h} onClick={() => setHour(h)}>
+                <button key={h} type="button" disabled={!!label} aria-pressed={hour === h} onClick={() => setHour(h)}>
                   {fmtHour(h)}
-                  {booked && <small>Taken</small>}
+                  {label && <small>{label}</small>}
                 </button>
               );
             })}
@@ -142,21 +153,7 @@ export default function Booker() {
 
       <dialog ref={dialog} className="popup" onClose={() => setDone(null)}
         onClick={(e) => e.target === e.currentTarget && e.currentTarget.close()}>
-        {done && (
-          <div className="popup-body">
-            <img src={`/icons/${done.court}.webp`} alt="" width="88" height="88" />
-            <h2>Request Sent</h2>
-            <p>Thanks, {done.name}. You’ll get a call on {done.phone} to confirm your slot.</p>
-            <dl>
-              <dt>Court</dt><dd>{COURTS[done.court]}</dd>
-              <dt>Date</dt><dd>{longDate(done.date)}</dd>
-              <dt>Time</dt><dd>{fmtHour(done.hour)} - {fmtHour(done.hour + 1)}</dd>
-              <dt>Price</dt><dd>{PRICE[done.court]}</dd>
-            </dl>
-            <p className="note">Pay at the counter when you arrive.</p>
-            <form method="dialog"><button className="btn big" autoFocus>Done</button></form>
-          </div>
-        )}
+        {done && <PayDeposit done={done} />}
       </dialog>
     </div>
   );
