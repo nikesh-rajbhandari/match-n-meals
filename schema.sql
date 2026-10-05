@@ -7,6 +7,11 @@ create table if not exists bookings (
   name       text not null,
   phone      text not null,
   email      text,
+  status     text not null default 'pending' check (status in ('pending', 'approved')),
   created_at timestamptz not null default now(),
-  unique (court, date, hour) -- the DB itself prevents double-booking
+  unique (court, date, hour) -- the DB itself prevents double-booking; pending requests hold the slot too
 );
+
+-- Migration for databases created before `status` existed (old bookings count as approved):
+-- alter table bookings add column if not exists status text not null default 'approved' check (status in ('pending', 'approved'));
+-- alter table bookings alter column status set default 'pending';

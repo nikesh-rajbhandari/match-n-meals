@@ -1,11 +1,11 @@
 # Match & Meals
 
-Info site + court booking (pickleball / basketball) + admin panel. Next.js on Vercel, Postgres on Neon.
+Court booking (pickleball / basketball, 6 AM - 9 PM) + admin panel. Next.js on Vercel, Postgres on Neon.
 
 ## Pages
-- `/` — info: courts, menu, hours, contact (edit `app/page.js`)
-- `/book` — pick court, date, 1-hour slot; taken slots are greyed out
-- `/admin` — password-protected booking list, filter by date, cancel bookings
+- `/` - booking widget up top, then courts, how it works, hours and contact (edit `app/page.js`)
+- `/book` - the same booking widget on its own; customer requests start as **pending** and hold the slot
+- `/admin` - password-protected: approve / reject pending requests, cancel bookings, filter by day, add walk-in or phone bookings (one or more hours, approved straight away)
 
 Prices, opening hours and courts live in `lib/config.js`.
 

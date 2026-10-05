@@ -23,17 +23,17 @@ export async function POST(req) {
   const today = new Date().toLocaleDateString('en-CA', { timeZone: TZ });
 
   if (!COURTS[b.court]) return bad('Pick a court');
-  if (!isDate(b.date) || b.date < today) return bad('Pick a valid date');
-  if (!Number.isInteger(hour) || hour < OPEN_HOUR || hour >= CLOSE_HOUR) return bad('Pick a valid time');
+  if (!isDate(b.date) || b.date < today) return bad('Pick today or a later date');
+  if (!Number.isInteger(hour) || hour < OPEN_HOUR || hour >= CLOSE_HOUR) return bad('Pick one of the open time slots');
   if (!name || name.length > 100) return bad('Enter your name');
-  if (!/^[+\d\s-]{7,20}$/.test(phone)) return bad('Enter a valid phone number');
-  if (email && (email.length > 200 || !email.includes('@'))) return bad('Enter a valid email');
+  if (!/^[+\d\s-]{7,20}$/.test(phone)) return bad('Enter a phone number using digits, spaces, + or -');
+  if (email && (email.length > 200 || !email.includes('@'))) return bad('Enter a valid email, or leave it blank');
 
   try {
     await sql`insert into bookings (court, date, hour, name, phone, email)
               values (${b.court}, ${b.date}, ${hour}, ${name}, ${phone}, ${email})`;
   } catch (e) {
-    if (e.code === '23505') return bad('Sorry, that slot was just taken', 409);
+    if (e.code === '23505') return bad('That slot was just taken. Pick another time.', 409);
     throw e;
   }
   return Response.json({ ok: true }, { status: 201 });
