@@ -26,10 +26,14 @@ export default function Notifications() {
       setState(ios && !standalone ? 'ios-install' : 'unsupported'); // iOS only exposes push to Home Screen apps
       return;
     }
+    // fallback from sw.js when it can't navigate this window itself (window not yet controlled by it)
+    const onMessage = (e) => { if (e.data?.type === 'open' && e.data.url?.startsWith(location.origin + '/admin')) location.assign(e.data.url); };
+    navigator.serviceWorker.addEventListener('message', onMessage);
     navigator.serviceWorker.register('/sw.js', { scope: '/admin', updateViaCache: 'none' })
       .then((reg) => reg.pushManager.getSubscription())
       .then((sub) => setState(Notification.permission === 'denied' ? 'blocked' : sub ? 'on' : 'off'))
       .catch(() => setState('unsupported'));
+    return () => navigator.serviceWorker.removeEventListener('message', onMessage);
   }, []);
 
   const run = (fn) => async () => {
