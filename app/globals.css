@@ -286,6 +286,8 @@ input::placeholder { color: var(--muted); }
 .slot small { color: var(--muted); font-size: .78rem; }
 .slot.approved small, .slot.pending small { color: var(--ink); }
 .slot.past { opacity: .5; }
+.slot.alt { box-shadow: inset 4px 0 0 var(--accent); } /* every other booking of the day, see slots in app/admin/page.js */
+.slot small.slot-code { color: var(--muted); font-variant-numeric: tabular-nums; }
 .slot[aria-pressed="true"] { opacity: 1; } /* a picked past hour (record-keeping) must stay readable */
 .slot[aria-pressed="true"] small { color: inherit; }
 .slot[aria-current] { outline: 2px solid var(--accent); outline-offset: 1px; }

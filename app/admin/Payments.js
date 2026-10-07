@@ -3,7 +3,7 @@ import { sql } from '@/lib/db';
 import { COURTS, rs, spans, bookingRef, waLink, waNumber } from '@/lib/config';
 import { today, isDate, addDays, dayLabel, shortDay, stampFmt } from '@/lib/dates';
 import { summarize, STATE } from '@/lib/money';
-import { bs } from '@/lib/admin';
+import { bs, billKey } from '@/lib/admin';
 import Icon from '@/app/Icon';
 import ConfirmButton from './ConfirmButton';
 import Popup from './Popup';
@@ -39,8 +39,9 @@ function range(period, date) {
   return { start, end: addDays(next, -1), prev: `${addDays(start, -1).slice(0, 7)}-01`, next, label: dayLabel(start, { month: 'long', year: 'numeric' }) };
 }
 
+const codes = (b) => b.refs.map(bookingRef).join(', ');
 const waBalance = (b, due) => waLink(waNumber(b.phone),
-  `Hi ${b.name}, this is Match & Meals about your booking ${bookingRef(b.ref)} (${COURTS[b.court]}, ${shortDay(b.day)}). Please pay the remaining ${rs(due)} at the counter. Thank you!`);
+  `Hi ${b.name}, this is Match & Meals about your booking${b.refs.length > 1 ? 's' : ''} ${codes(b)} (${COURTS[b.court]}, ${shortDay(b.day)}). Please pay the remaining ${rs(due)} at the counter. Thank you!`);
 
 export default async function Payments({ q }) {
   const period = PERIODS[q.period] ? q.period : 'week';
@@ -57,16 +58,25 @@ export default async function Payments({ q }) {
   };
 
   // pending requests haven't paid anything yet: they stay on the Bookings tab
-  const rows = await sql`
+  const byRef = await sql`
     select coalesce(ref, id) as ref, min(court) as court, min(date)::text as day, min(name) as name, min(phone) as phone,
       coalesce(array_agg(hour order by hour) filter (where status <> 'cancelled'), array_agg(hour order by hour)) as hours,
       coalesce(sum(rate) filter (where status <> 'cancelled'), 0)::int as total
     from bookings where date between ${start} and ${end} and status <> 'pending' and (${court} = 'all' or court = ${court})
     group by coalesce(ref, id) order by day, min(hour)`;
+  // one row per bill: the same customer's bookings on one court and day are paid together (see moneyFor)
+  const rows = Object.values(byRef.reduce((o, b) => ((o[billKey(b)] ??= []).push(b), o), {})).map((g) => {
+    const live = g.filter((b) => b.total); // fully cancelled bookings only add their hours if nothing else is left
+    return {
+      ...g[0], ref: Math.min(...g.map((b) => b.ref)), refs: g.map((b) => b.ref).sort((a, b) => a - b),
+      hours: [...new Set((live.length ? live : g).flatMap((b) => b.hours))].sort((a, b) => a - b),
+      total: g.reduce((s, b) => s + b.total, 0),
+    };
+  });
   const entries = rows.length
-    ? await sql`select * from payments where ref = any(${rows.map((r) => r.ref)}::int[]) order by created_at` : [];
+    ? await sql`select * from payments where ref = any(${byRef.map((r) => r.ref)}::int[]) order by created_at` : [];
   const all = rows.map((b) => {
-    const mine = entries.filter((e) => e.ref === b.ref);
+    const mine = entries.filter((e) => b.refs.includes(e.ref));
     return { ...b, entries: mine, m: summarize(b, mine) };
   }).filter((b) => b.m.state !== 'cancelled'); // cancelled with no money left on it: nothing to track
 
@@ -136,7 +146,7 @@ export default async function Payments({ q }) {
               <li key={b.ref} id={`pay-${b.ref}`} className="request pay-row">
                 <Link href={`/admin?${new URLSearchParams({ court: b.court, date: b.day, hour: b.hours[0] })}#detail`} className="request-when">
                   <strong>{shortDay(b.day)}, {spans(b.hours)} <small className="bs">{bs(b.day, 'D MMMM')}</small></strong>
-                  <span><Icon name={b.court} /> {COURTS[b.court]} · <b translate="no">{bookingRef(b.ref)}</b></span>
+                  <span><Icon name={b.court} /> {COURTS[b.court]} · <b translate="no">{codes(b)}</b></span>
                 </Link>
                 <div className="request-who">
                   <strong className="clip">{b.name}</strong>
@@ -149,7 +159,7 @@ export default async function Payments({ q }) {
                   <span className={`status ${m.state}`}>{STATE[m.state]}{m.state === 'held' && ` · ${rs(m.held)} held`}</span>
                   {m.total > 0 && (m.due > 0 ? (
                     <Popup className="btn small" label="Record Payment" title="Record Payment">
-                      <p><b translate="no">{bookingRef(b.ref)}</b> · {b.name}</p>
+                      <p><b translate="no">{codes(b)}</b> · {b.name}</p>
                       <PaymentForm action={recordPayment} back={backFor(b.ref)} bookingRef={b.ref} total={m.total} paid={m.paid}
                         discount={pct ? pct.slice(0, -1) : m.discount ? String(m.discount) : ''} pct={!!pct} />
                     </Popup>

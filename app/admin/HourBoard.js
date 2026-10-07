@@ -42,16 +42,17 @@ export default function HourBoard({ children, slots, query, selected, detail, ad
       <div className="schedule-main">
       {children /* court toggle, day strip, legend: server-rendered */}
       <nav className="slots admin-slots" aria-label="Hours">
-        {slots.map(({ h, state, name, past: isPast }) => state === 'free' ? (
+        {slots.map(({ h, state, name, code, alt, past: isPast }) => state === 'free' ? (
           <button key={h} type="button" className={`slot free${isPast ? ' past' : ''}`} aria-pressed={picked.includes(h)} onClick={() => toggle(h)}>
             <span className="slot-time">{fmtHour(h)}</span>
             <small className="clip">{isPast ? 'Past' : 'Free'}</small>
           </button>
         ) : (
-          <Link key={h} href={`/admin?${query}&hour=${h}#detail`} className={`slot ${state}`}
+          <Link key={h} href={`/admin?${query}&hour=${h}#detail`} className={`slot ${state}${alt ? ' alt' : ''}`}
             aria-current={showDetail && selected === h ? 'true' : undefined}>
             <span className="slot-time">{fmtHour(h)}</span>
             <small className="clip">{name}</small>
+            <small className="slot-code" translate="no">{code}</small>
           </Link>
         ))}
       </nav>

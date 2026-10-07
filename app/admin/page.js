@@ -16,6 +16,8 @@ import ConfirmButton from './ConfirmButton';
 import Notifications from './Notifications';
 import Notice from './Notice';
 import HourBoard from './HourBoard';
+import Popup from './Popup';
+import MoveForm from './MoveForm';
 import Refresher from './Refresher';
 import PasswordInput from './PasswordInput';
 
@@ -72,6 +74,37 @@ async function cancel(form) {
     : await sql`delete from bookings where id = ${id} returning name, hour, status`;
   revalidatePath('/admin');
   redirect(backTo(form, b && `${b.status === 'pending' ? 'Rejected' : 'Cancelled'} ${b.name}, ${fmtHour(b.hour)}. The slot is free again.${paid ? ' The money paid stays on the Payments tab.' : ''}`));
+}
+
+// Change Date / Time: moves one booked hour that hasn't ended to a free hour that hasn't started, on the same court.
+// It keeps its code and payments, unless it leaves other hours of its booking behind for another day: then it becomes its
+// own booking (new code), so one code never spans two days. The unique slot index refuses an hour someone just took.
+async function move(form) {
+  'use server';
+  if (!(await isAdmin())) return;
+  const id = Number(form.get('id')), date = String(form.get('date') ?? ''), hour = Number(form.get('hour')), t = today();
+  let msg, err = true;
+  if (!isDate(date) || !hours().includes(hour) || date < t || (date === t && hour < hourNow())) msg = 'Pick a time that hasn’t started yet';
+  else {
+    try {
+      const [b] = await sql`update bookings b set date = ${date}, hour = ${hour},
+          ref = case when b.date <> ${date}::date and exists (select 1 from bookings o where coalesce(o.ref, o.id) = coalesce(b.ref, b.id) and o.id <> b.id)
+            then case when b.id <> coalesce(b.ref, b.id) then b.id else nextval(pg_get_serial_sequence('bookings', 'id')) end
+            else b.ref end
+        where id = ${id} and status <> 'cancelled' and date + (hour + 1) * interval '1 hour' > now() at time zone ${TZ}
+        returning name, court, coalesce(ref, id) as ref`;
+      if (!b) msg = 'That booking has already ended or was cancelled';
+      else {
+        msg = `Moved ${b.name} to ${shortDay(date)}, ${fmtHour(hour)} (${bookingRef(b.ref)}). Let them know on WhatsApp.`; err = false;
+        form.set('back', `/admin?${new URLSearchParams({ court: b.court, date, hour })}#detail`); // land on the new slot
+      }
+    } catch (e) {
+      if (e.code !== '23505') throw e;
+      msg = 'That hour was just taken. Pick another.';
+    }
+  }
+  revalidatePath('/admin');
+  redirect(backTo(form, msg, err));
 }
 
 // Walk-ins and phone bookings: one or more consecutive hours from a free slot, approved straight away.
@@ -191,7 +224,13 @@ export default async function Admin({ searchParams }) {
   const money = sel?.status === 'approved' ? await moneyFor(sel.ref ?? sel.id) : null;
   const { days } = weekOf(t, date);
   const nowHour = date === t ? hourNow() : date < t ? 99 : -1; // hours before this have already started
-  const slots = hours().map((h) => ({ h, state: byHour[h]?.status ?? 'free', name: byHour[h]?.name ?? null, past: h < nowHour }));
+  // each booking shows its code; every other booking of the day gets a stripe, so the same customer's back-to-back bookings
+  // don't read as one
+  const order = [...new Set(day.toSorted((a, b) => a.hour - b.hour).map((b) => b.ref ?? b.id))];
+  const slots = hours().map((h) => {
+    const b = byHour[h], ref = b && (b.ref ?? b.id);
+    return { h, state: b?.status ?? 'free', name: b?.name ?? null, code: b ? bookingRef(ref) : null, alt: !!b && order.indexOf(ref) % 2 === 1, past: h < nowHour };
+  });
 
   const Back = () => <input type="hidden" name="back" value={here} />;
   const Actions = ({ b }) => (
@@ -263,6 +302,12 @@ export default async function Admin({ searchParams }) {
                 <dt>Requested</dt><dd>{stampFmt.format(new Date(sel.created_at))} <span className="muted">({ago(sel)})</span></dd>
               </dl>
               <Actions b={sel} />
+              {hour >= nowHour && (
+                <Popup className="btn ghost wa-btn" label="Change Date / Time" title="Change Date / Time">
+                  <p>{sel.name} · {shortDay(sel.day)}, {fmtHour(hour)} · <b translate="no">{bookingRef(sel.ref ?? sel.id)}</b></p>
+                  <MoveForm action={move} back={`${here}#detail`} id={sel.id} court={court} date={date} hour={hour} t={t} now={hourNow()} />
+                </Popup>
+              )}
               <a href={waCustomer(sel, money?.due)} target="_blank" rel="noopener" className="btn ghost wa-btn">
                 {sel.status === 'pending' ? 'Ask for deposit on WhatsApp' : 'Send confirmation on WhatsApp'}
               </a>
