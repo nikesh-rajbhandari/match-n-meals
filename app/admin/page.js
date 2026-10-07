@@ -5,11 +5,13 @@ import { after } from 'next/server';
 import { redirect } from 'next/navigation';
 import { sql } from '@/lib/db';
 import { notifyAdmins } from '@/lib/push';
-import NepaliDate from 'nepali-date-converter';
-import { COURTS, OPEN_HOUR, CLOSE_HOUR, TZ, DEPOSIT, RATE, hours, fmtHour, rs, bookingRef, waLink, waNumber } from '@/lib/config';
-import { today, hourNow, isDate, addDays, dayLabel, longDate, weekOf } from '@/lib/dates';
+import { COURTS, OPEN_HOUR, CLOSE_HOUR, TZ, DEPOSIT, RATE, hours, fmtHour, rs, spans, bookingRef, waLink, waNumber } from '@/lib/config';
+import { today, hourNow, isDate, shortDay, stampFmt, weekOf } from '@/lib/dates';
+import { parseRs, STATE } from '@/lib/money';
 import Icon from '@/app/Icon';
-import { isAdmin, adminToken } from '@/lib/admin';
+import { isAdmin, adminToken, backTo, bs, moneyFor } from '@/lib/admin';
+import Payments from './Payments';
+import DayPicker from './DayPicker';
 import ConfirmButton from './ConfirmButton';
 import Notifications from './Notifications';
 import Notice from './Notice';
@@ -43,31 +45,33 @@ async function logout() {
   revalidatePath('/admin');
 }
 
-// Every action posts `back` (the current admin URL) so the admin stays on the same court/day after acting.
-// Success goes in ?msg= (auto-hides), problems in ?err= (stays until closed); see Notice.js.
-const backTo = (form, msg, err) => {
-  const back = String(form.get('back') ?? '/admin');
-  const url = new URL(back.startsWith('/admin') ? back : '/admin', 'http://x');
-  url.searchParams.delete('msg'); url.searchParams.delete('err');
-  if (msg) url.searchParams.set(err ? 'err' : 'msg', msg);
-  return `${url.pathname}${url.search}`;
-};
-
+// Approves every hour booked together. Deposits vary, so staff type in what the WhatsApp screenshot shows (or leave it blank).
 async function approve(form) {
   'use server';
   if (!(await isAdmin())) return;
-  const [b] = await sql`update bookings set status = 'approved' where id = ${Number(form.get('id'))} returning name, hour`;
+  const deposit = String(form.get('deposit') ?? '').trim(), amount = parseRs(deposit);
+  if (deposit && !amount) redirect(backTo(form, 'Enter the deposit in whole rupees, or leave it blank', true));
+  const rows = await sql`update bookings set status = 'approved'
+    where status = 'pending' and coalesce(ref, id) = (select coalesce(ref, id) from bookings where id = ${Number(form.get('id'))})
+    returning coalesce(ref, id) as ref, name, hour`;
+  if (rows.length && amount) {
+    await sql`insert into payments (ref, kind, amount, method, note) values (${rows[0].ref}, 'payment', ${amount}, 'qr', 'Deposit')`;
+  }
   revalidatePath('/admin');
-  redirect(backTo(form, b && `Approved ${b.name}, ${fmtHour(b.hour)}`));
+  redirect(backTo(form, rows.length && `Approved ${rows[0].name}, ${spans(rows.map((r) => r.hour).sort((a, b) => a - b))}${amount ? `. Deposit ${rs(amount)} recorded.` : ''}`));
 }
 
-// Reject (pending) and cancel (approved) both delete the row, which frees the slot.
+// Reject (pending) and cancel (approved) free the slot. Rows with money on them are kept as 'cancelled' for the books.
 async function cancel(form) {
   'use server';
   if (!(await isAdmin())) return;
-  const [b] = await sql`delete from bookings where id = ${Number(form.get('id'))} returning name, hour, status`;
+  const id = Number(form.get('id'));
+  const [{ paid } = {}] = await sql`select exists (select 1 from payments p where p.ref = coalesce(b.ref, b.id)) as paid from bookings b where id = ${id}`;
+  const [b] = paid
+    ? await sql`update bookings set status = 'cancelled' where id = ${id} returning name, hour, status`
+    : await sql`delete from bookings where id = ${id} returning name, hour, status`;
   revalidatePath('/admin');
-  redirect(backTo(form, b && `${b.status === 'pending' ? 'Rejected' : 'Cancelled'} ${b.name}, ${fmtHour(b.hour)}. The slot is free again.`));
+  redirect(backTo(form, b && `${b.status === 'pending' ? 'Rejected' : 'Cancelled'} ${b.name}, ${fmtHour(b.hour)}. The slot is free again.${paid ? ' The money paid stays on the Payments tab.' : ''}`));
 }
 
 // Walk-ins and phone bookings: one or more consecutive hours from a free slot, approved straight away.
@@ -87,10 +91,13 @@ async function addBooking(form) {
   else if (!name || name.length > 100 || !phone || phone.length > 20) msg = 'Enter the customer’s name and phone number';
   else {
     try {
-      // one statement = all ticked hours or none
-      await sql`insert into bookings (court, date, hour, name, phone, email, status)
-                select ${f.court}, ${f.date}, h, ${name}, ${phone}, ${email}, 'approved'
-                from unnest(${picked}::int[]) h`;
+      // one statement = all ticked hours or none; then group them under the first id (see app/api/bookings/route.js)
+      const rows = await sql`insert into bookings (court, date, hour, rate, name, phone, email, status)
+                select ${f.court}, ${f.date}, h, ${RATE}, ${name}, ${phone}, ${email}, 'approved'
+                from unnest(${picked}::int[]) h returning id`;
+      const ids = rows.map((r) => r.id);
+      await sql`update bookings set ref = ${Math.min(...ids)} where id = any(${ids}::int[])`
+        .catch((e) => console.error('booking ref not set', ids, e.message));
       msg = `Booked ${name}, ${spans(picked)}`; err = false;
       // tell the other admins' devices; this one already knows
       after(() => notifyAdmins({
@@ -107,22 +114,6 @@ async function addBooking(form) {
   redirect(backTo(form, msg, err));
 }
 
-// [13, 14, 16] -> "1:00 PM - 3:00 PM, 4:00 PM - 5:00 PM"
-const spans = (hs) => hs.reduce((out, h) => {
-  const last = out[out.length - 1];
-  if (last && last[1] === h) last[1] = h + 1; else out.push([h, h + 1]);
-  return out;
-}, []).map(([a, b]) => `${fmtHour(a)} - ${fmtHour(b)}`).join(', ');
-
-const stampFmt = new Intl.DateTimeFormat('en-US', { timeZone: TZ, dateStyle: 'medium', timeStyle: 'short' });
-const shortDay = (d) => dayLabel(d, { weekday: 'short', month: 'short', day: 'numeric' });
-// Bikram Sambat (Nepali calendar), shown next to the English date: '2026-10-07' -> "21 Aswin 2083".
-// Built from local date parts so the server's timezone can't shift the day.
-const bs = (d, fmt = 'D MMMM YYYY') => {
-  const [y, m, day] = d.split('-').map(Number);
-  return NepaliDate.fromAD(new Date(y, m - 1, day)).format(fmt);
-};
-
 // "12 min ago" / "3 h ago" / "2 d ago"; requests older than STALE_H get a nudge (we can't know if the screenshot was sent)
 const STALE_H = 2;
 const ageHours = (b) => (Date.now() - new Date(b.created_at)) / 36e5;
@@ -131,12 +122,13 @@ const ago = (b) => {
   return m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
 };
 
-// One-tap WhatsApp to the customer from the admin app (it runs on the admin's phone, where WhatsApp is)
-const waCustomer = (b) => {
+// One-tap WhatsApp to the customer from the admin app (it runs on the admin's phone, where WhatsApp is).
+// `due` = the whole booking's balance (all its hours, minus discount and payments); pending requests don't need it.
+const waCustomer = (b, due) => {
   const when = `${COURTS[b.court]}, ${shortDay(b.day)}, ${fmtHour(b.hour)}`;
   const text = b.status === 'pending'
-    ? `Hi ${b.name}, this is Match & Meals about your booking ${bookingRef(b.id)} (${when}). Please pay the ${rs(DEPOSIT)} deposit and send the screenshot here to confirm it.`
-    : `Hi ${b.name}, your booking ${bookingRef(b.id)} is confirmed: ${when}. Please pay the remaining ${rs(RATE - DEPOSIT)} at the counter. See you!`;
+    ? `Hi ${b.name}, this is Match & Meals about your booking ${bookingRef(b.ref ?? b.id)} (${when}). Please pay the ${rs(DEPOSIT)} deposit and send the screenshot here to confirm it.`
+    : `Hi ${b.name}, your booking ${bookingRef(b.ref ?? b.id)} is confirmed: ${when}. ${due > 0 ? `Please pay the remaining ${rs(due)} at the counter.` : 'It’s fully paid.'} See you!`;
   return waLink(waNumber(b.phone), text);
 };
 
@@ -159,6 +151,27 @@ export default async function Admin({ searchParams }) {
     );
   }
 
+  const head = (tab) => (
+    <>
+      <div className="admin-head">
+        <h1>Admin</h1>
+        <div className="admin-tools">
+          <Refresher />
+          <Notifications />
+          <form action={logout}>
+            <button className="icon-btn logout" aria-label="Log out" title="Log out"><Icon name="logout" /></button>
+          </form>
+        </div>
+      </div>
+      <nav className="seg admin-tabs" aria-label="Section">
+        <Link href="/admin" aria-current={tab === 'bookings' ? 'page' : undefined}>Bookings</Link>
+        <Link href="/admin?tab=payments" aria-current={tab === 'payments' ? 'page' : undefined}>Payments</Link>
+      </nav>
+      {(q.msg || q.err) && <Notice key={q.msg || q.err} text={q.msg || q.err} error={!!q.err} />}
+    </>
+  );
+  if (q.tab === 'payments') return <section className="section admin">{head('payments')}<Payments q={q} /></section>;
+
   // view state lives in the URL: ?court=&date=&hour=
   const t = today();
   const court = COURTS[q.court] ? q.court : 'pickleball';
@@ -171,11 +184,12 @@ export default async function Admin({ searchParams }) {
     sql`select *, date::text as day from bookings
         where status = 'pending' and date + (hour + 1) * interval '1 hour' > now() at time zone ${TZ}
         order by date, hour, court`,
-    sql`select *, date::text as day from bookings where court = ${court} and date = ${date}`,
+    sql`select *, date::text as day from bookings where court = ${court} and date = ${date} and status <> 'cancelled'`,
   ]);
   const byHour = Object.fromEntries(day.map((b) => [b.hour, b]));
   const sel = hour === null ? null : byHour[hour] ?? null;
-  const { offset, start, days } = weekOf(t, date);
+  const money = sel?.status === 'approved' ? await moneyFor(sel.ref ?? sel.id) : null;
+  const { days } = weekOf(t, date);
   const nowHour = date === t ? hourNow() : date < t ? 99 : -1; // hours before this have already started
   const slots = hours().map((h) => ({ h, state: byHour[h]?.status ?? 'free', name: byHour[h]?.name ?? null, past: h < nowHour }));
 
@@ -183,7 +197,11 @@ export default async function Admin({ searchParams }) {
   const Actions = ({ b }) => (
     <div className="actions">
       {b.status === 'pending' && (
-        <form action={approve}><Back /><input type="hidden" name="id" value={b.id} /><button className="btn">Approve</button></form>
+        <form action={approve} className="approve" autoComplete="off">
+          <Back /><input type="hidden" name="id" value={b.id} />
+          <input name="deposit" inputMode="numeric" placeholder="Deposit Rs" aria-label="Deposit received in rupees (optional)" />
+          <button className="btn">Approve</button>
+        </form>
       )}
       <form action={cancel}>
         <Back /><input type="hidden" name="id" value={b.id} />
@@ -197,14 +215,7 @@ export default async function Admin({ searchParams }) {
 
   return (
     <section className="section admin">
-      <div className="admin-head">
-        <h1>Bookings</h1>
-        <form action={logout}><button className="btn ghost">Log Out</button></form>
-      </div>
-
-      <Refresher />
-      <Notifications />
-      {(q.msg || q.err) && <Notice key={q.msg || q.err} text={q.msg || q.err} error={!!q.err} />}
+      {head('bookings')}
 
       <h2 className="admin-h">Needs Approval {pending.length > 0 && <b className="count">{pending.length}</b>}</h2>
       {pending.length === 0 ? (
@@ -215,7 +226,7 @@ export default async function Admin({ searchParams }) {
             <li key={b.id} className="request">
               <Link href={`/admin?${new URLSearchParams({ court: b.court, date: b.day, hour: b.hour })}#detail`} className="request-when">
                 <strong>{shortDay(b.day)}, {fmtHour(b.hour)} <small className="bs">{bs(b.day, 'D MMMM')}</small></strong>
-                <span><Icon name={b.court} /> {COURTS[b.court]} · <b translate="no">{bookingRef(b.id)}</b></span>
+                <span><Icon name={b.court} /> {COURTS[b.court]} · <b translate="no">{bookingRef(b.ref ?? b.id)}</b></span>
               </Link>
               <div className="request-who">
                 <strong className="clip">{b.name}</strong>
@@ -244,11 +255,15 @@ export default async function Admin({ searchParams }) {
               <dl>
                 <dt>Phone</dt><dd><a href={`tel:${sel.phone}`}>{sel.phone}</a></dd>
                 {sel.email && <><dt>Email</dt><dd className="clip"><a href={`mailto:${sel.email}`}>{sel.email}</a></dd></>}
-                <dt>Code</dt><dd translate="no">{bookingRef(sel.id)}</dd>
+                <dt>Code</dt><dd translate="no">{bookingRef(sel.ref ?? sel.id)}</dd>
+                {money && <><dt>Payment</dt><dd>
+                  <Link href={`/admin?${new URLSearchParams({ tab: 'payments', date: sel.day, show: 'all' })}`}>{STATE[money.state]}</Link>
+                  {money.due > 0 && <span className="muted"> · due {rs(money.due)}</span>}
+                </dd></>}
                 <dt>Requested</dt><dd>{stampFmt.format(new Date(sel.created_at))} <span className="muted">({ago(sel)})</span></dd>
               </dl>
               <Actions b={sel} />
-              <a href={waCustomer(sel)} target="_blank" rel="noopener" className="btn ghost wa-btn">
+              <a href={waCustomer(sel, money?.due)} target="_blank" rel="noopener" className="btn ghost wa-btn">
                 {sel.status === 'pending' ? 'Ask for deposit on WhatsApp' : 'Send confirmation on WhatsApp'}
               </a>
             </>
@@ -261,28 +276,7 @@ export default async function Admin({ searchParams }) {
             ))}
           </nav>
 
-          <div className="week-head">
-            <p className="label">{longDate(date)}<small className="bs">{bs(date)}</small></p>
-            <div className="week-nav">
-              {date !== t && <Link className="today" href={href({ date: t })}>Today</Link>}
-              <Link aria-label="Previous week" href={href({ date: addDays(start, -7) })}><span aria-hidden="true">←</span></Link>
-              <Link aria-label="Next week" href={href({ date: addDays(start, 7) })}><span aria-hidden="true">→</span></Link>
-            </div>
-          </div>
-          <nav className="days" aria-label="Day">
-            {days.map((d) => (
-              <Link key={d} href={href({ date: d })} aria-current={date === d ? 'page' : undefined} aria-label={`${longDate(d)} (${bs(d)})`}>
-                <small>{d === t ? 'Today' : dayLabel(d, { weekday: 'short' })}</small>
-                <strong>{dayLabel(d, { day: 'numeric' })}</strong>
-                <small className="bs">{bs(d, bs(d, 'D') === '1' ? 'MMM D' : 'D')}</small>
-              </Link>
-            ))}
-          </nav>
-          <form className="other-day">
-            <input type="hidden" name="court" value={court} />
-            <label>Jump to date <input type="date" name="date" defaultValue={date} /></label>
-            <button className="btn ghost small">Go</button>
-          </form>
+          <DayPicker date={date} t={t} days={days} link={(d) => href({ date: d })} keep={{ court }} />
 
           <ul className="legend" aria-label="Legend">
             <li><span className="swatch free" /> Free</li>

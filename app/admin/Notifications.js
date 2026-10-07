@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import Icon from '@/app/Icon';
 import { saveSubscription, removeSubscription, sendTest } from './push-actions';
 
 const key = () => {
@@ -8,6 +9,14 @@ const key = () => {
   return Uint8Array.from(raw, (c) => c.charCodeAt(0));
 };
 
+// Why the bell can't turn on, shown when it's tapped in those states.
+const HELP = {
+  blocked: 'Notifications are blocked. Allow them for this site in your browser or phone settings, then reload.',
+  'ios-install': 'Install the app to get notifications: in Safari, tap Share, then Add to Home Screen, and open Match & Meals Admin from there.',
+  unsupported: 'This browser can’t show push notifications. Use Chrome on Android, or Safari after adding the app to your Home Screen.',
+};
+
+// Header bell: one tap turns booking notifications on or off for this device; when on, a send icon fires a test.
 // state: loading | ios-install | unsupported | blocked | off | on
 export default function Notifications() {
   const [state, setState] = useState('loading');
@@ -43,40 +52,44 @@ export default function Notifications() {
   };
 
   const turnOn = run(async () => {
-    if ((await Notification.requestPermission()) !== 'granted') return setState('blocked');
+    if ((await Notification.requestPermission()) !== 'granted') { setState('blocked'); return setNote(HELP.blocked); }
     const reg = await navigator.serviceWorker.ready;
     const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key() });
     const res = await saveSubscription(sub.toJSON());
     if (!res.ok) { await sub.unsubscribe(); throw new Error('save failed'); }
-    setState('on');
+    setState('on'); setNote('Notifications on. This device will ring for every new booking request.');
   });
 
   const turnOff = run(async () => {
     const sub = await (await navigator.serviceWorker.ready).pushManager.getSubscription();
     if (sub) { await removeSubscription(sub.endpoint); await sub.unsubscribe(); }
-    setState('off');
+    setState('off'); setNote('Notifications off for this device.');
   });
 
   const test = run(async () => { await sendTest(); setNote('Test sent. It should arrive in a few seconds.'); });
 
   if (state === 'loading') return null;
+  const on = state === 'on', canToggle = on || state === 'off';
   return (
-    <div className="notify" role="region" aria-label="Booking notifications">
-      {state === 'on' && <>
-        <p><strong>Notifications are on</strong> for this device. You’ll get one for every new website request.</p>
-        <div className="actions">
-          <button className="btn ghost" onClick={test} disabled={busy}>Send Test</button>
-          <button className="btn ghost" onClick={turnOff} disabled={busy}>Turn Off</button>
+    <>
+      {on && (
+        <button type="button" className="icon-btn" onClick={test} disabled={busy} aria-label="Send a test notification" title="Send a test notification">
+          <Icon name="send" />
+        </button>
+      )}
+      <button type="button" className={`icon-btn bell${on ? ' on' : ''}${canToggle ? '' : ' warn'}`} disabled={busy}
+        onClick={canToggle ? (on ? turnOff : turnOn) : () => setNote(HELP[state])}
+        aria-pressed={canToggle ? on : undefined}
+        aria-label={on ? 'Booking notifications are on for this device' : canToggle ? 'Turn on booking notifications' : 'Booking notifications unavailable'}
+        title={on ? 'Notifications on (tap to turn off)' : canToggle ? 'Turn on notifications' : 'Notifications unavailable'}>
+        <Icon name={on ? 'bell' : 'bell-off'} />
+      </button>
+      {note && (
+        <div className="notice" role="status">
+          <p>{note}</p>
+          <button type="button" className="notice-close" aria-label="Dismiss message" onClick={() => setNote(null)}><span aria-hidden="true">×</span></button>
         </div>
-      </>}
-      {state === 'off' && <>
-        <p><strong>Get notified of new bookings.</strong> Turn this on for each phone or computer that should ring.</p>
-        <button className="btn" onClick={turnOn} disabled={busy}>{busy ? 'Turning On…' : 'Turn On Notifications'}</button>
-      </>}
-      {state === 'blocked' && <p><strong>Notifications are blocked.</strong> Allow them for this site in your browser or phone settings, then reload.</p>}
-      {state === 'ios-install' && <p><strong>Install the app to get notifications.</strong> In Safari, tap Share, then Add to Home Screen, and open Match &amp; Meals Admin from there.</p>}
-      {state === 'unsupported' && <p className="muted">This browser can’t show push notifications. Use Chrome on Android, or Safari after adding the app to your Home Screen.</p>}
-      {note && <p className="muted" role="status">{note}</p>}
-    </div>
+      )}
+    </>
   );
 }

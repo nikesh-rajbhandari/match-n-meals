@@ -1,0 +1,33 @@
+# Local database for `npm run dev`: set DB_ENV=local in .env.local, then `npm run db:up`. See lib/db.js.
+# The app talks to Neon over HTTP, so a small proxy sits in front of plain Postgres and speaks the same protocol.
+# schema.sql runs on the first start only; `npm run db:reset` wipes the data and starts fresh.
+name: match-n-meals
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: main
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    ports:
+      - "127.0.0.1:55432:5432" # for psql/GUI clients; off 5432 so it can't clash with other projects' Postgres
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "main"]
+      interval: 2s
+      retries: 15
+
+  neon-proxy:
+    image: ghcr.io/timowilhelm/local-neon-http-proxy:main
+    environment:
+      PG_CONNECTION_STRING: postgres://postgres:postgres@postgres:5432/main
+    ports:
+      - "127.0.0.1:4444:4444"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:

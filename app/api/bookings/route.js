@@ -1,7 +1,7 @@
 import { after } from 'next/server';
 import { sql } from '@/lib/db';
 import { notifyAdmins } from '@/lib/push';
-import { COURTS, OPEN_HOUR, CLOSE_HOUR, MAX_HOURS, TZ, fmtSpan, bookingRef } from '@/lib/config';
+import { COURTS, OPEN_HOUR, CLOSE_HOUR, MAX_HOURS, TZ, RATE, fmtSpan, bookingRef } from '@/lib/config';
 import { dayLabel } from '@/lib/dates';
 
 const isDate = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d) && !isNaN(Date.parse(d));
@@ -38,9 +38,13 @@ export async function POST(req) {
   let id;
   try {
     // one statement = every hour or none
-    const rows = await sql`insert into bookings (court, date, hour, name, phone, email)
-                           select ${b.court}, ${b.date}, h, ${name}, ${phone}, ${email} from unnest(${hrs}::int[]) h returning id`;
+    const rows = await sql`insert into bookings (court, date, hour, rate, name, phone, email)
+                           select ${b.court}, ${b.date}, h, ${RATE}, ${name}, ${phone}, ${email} from unnest(${hrs}::int[]) h returning id`;
     id = Math.min(...rows.map((r) => r.id));
+    // ponytail: second statement; if it fails the hours stay ungrouped (ref null, admin reads coalesce(ref, id))
+    // rather than failing a booking that already landed
+    await sql`update bookings set ref = ${id} where id = any(${rows.map((r) => r.id)}::int[])`
+      .catch((e) => console.error('booking ref not set', id, e.message));
   } catch (e) {
     if (e.code === '23505') return bad('That time was just taken. Pick another time.', 409);
     throw e;
