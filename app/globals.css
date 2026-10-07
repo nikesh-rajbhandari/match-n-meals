@@ -350,6 +350,8 @@ input::placeholder { color: var(--muted); }
 
 /* Payments tab: period picker, totals, filter chips, one row per booking with its price breakdown */
 .pay-period .seg { max-width: 360px; }
+.pay-court { max-width: 480px; margin: 16px 0 10px; }
+@media (max-width: 420px) { .pay-court a { gap: 4px; padding-inline: 4px; font-size: .9rem; } }
 .pay-totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin: 16px 0 4px; }
 .pay-totals div { padding: 12px 14px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
 .pay-totals dt { color: var(--muted); font-size: .8rem; font-weight: 600; }

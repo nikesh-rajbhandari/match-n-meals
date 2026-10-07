@@ -47,15 +47,21 @@ export default async function Payments({ q }) {
   const t = today();
   const date = isDate(q.date) ? q.date : t;
   const show = SHOW[q.show] ? q.show : 'open';
+  const court = COURTS[q.court] ? q.court : 'all';
   const { start, end, prev, next, label, days } = range(period, date);
-  const href = (o) => `/admin?${new URLSearchParams({ tab: 'payments', period, date, show, ...o })}`;
+  const keep = { tab: 'payments', period, show, ...(court !== 'all' && { court }) }; // the view's params, minus the date
+  const href = (o) => {
+    const p = new URLSearchParams({ ...keep, date, ...o });
+    if (p.get('court') === 'all') p.delete('court');
+    return `/admin?${p}`;
+  };
 
   // pending requests haven't paid anything yet: they stay on the Bookings tab
   const rows = await sql`
     select coalesce(ref, id) as ref, min(court) as court, min(date)::text as day, min(name) as name, min(phone) as phone,
       coalesce(array_agg(hour order by hour) filter (where status <> 'cancelled'), array_agg(hour order by hour)) as hours,
       coalesce(sum(rate) filter (where status <> 'cancelled'), 0)::int as total
-    from bookings where date between ${start} and ${end} and status <> 'pending'
+    from bookings where date between ${start} and ${end} and status <> 'pending' and (${court} = 'all' or court = ${court})
     group by coalesce(ref, id) order by day, min(hour)`;
   const entries = rows.length
     ? await sql`select * from payments where ref = any(${rows.map((r) => r.ref)}::int[]) order by created_at` : [];
@@ -82,7 +88,7 @@ export default async function Payments({ q }) {
           ))}
         </nav>
         {period === 'day' ? (
-          <DayPicker date={date} t={t} days={days} link={(d) => href({ date: d })} keep={{ tab: 'payments', period, show }} />
+          <DayPicker date={date} t={t} days={days} link={(d) => href({ date: d })} keep={keep} />
         ) : (
           <div className="week-head">
             <p className="label">{label}<small className="bs">{bs(start, 'D MMM')} - {bs(end, 'D MMM YYYY')}</small></p>
@@ -94,6 +100,14 @@ export default async function Payments({ q }) {
           </div>
         )}
       </div>
+
+      <nav className="seg three pay-court" aria-label="Court">
+        {Object.entries({ all: 'All Courts', ...COURTS }).map(([k, l]) => (
+          <Link key={k} href={href({ court: k })} aria-current={court === k ? 'page' : undefined}>
+            {k !== 'all' && <Icon name={k} />} {l}
+          </Link>
+        ))}
+      </nav>
 
       <dl className="pay-totals">
         <div><dt>Billed</dt><dd>{rs(sum((m) => m.total))}</dd></div>
