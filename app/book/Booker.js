@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { COURTS, PRICE, hours, fmtHour } from '@/lib/config';
+import { COURTS, PRICE, MAX_HOURS, hours, fmtHour, fmtSpan } from '@/lib/config';
 import { today, hourNow, isDate, addDays, dayLabel, longDate, weekOf } from '@/lib/dates';
 import Icon from '@/app/Icon';
 import PayDeposit from './PayDeposit';
@@ -9,7 +9,7 @@ export default function Booker() {
   const [court, setCourt] = useState('pickleball');
   const [t, setT] = useState(null); // venue "today"; set after mount so the static HTML never bakes in the build date
   const [date, setDate] = useState(null);
-  const [hour, setHour] = useState(null);
+  const [pick, setPick] = useState([]); // sorted consecutive hours, at most MAX_HOURS
   const [taken, setTaken] = useState(null); // null (loading) | 'error' | { taken: [hours], held: [hours] }
   const [error, setError] = useState(null);
   const [done, setDone] = useState(null); // last successful request, shown in the popup
@@ -27,21 +27,44 @@ export default function Booker() {
     setDate(isDate(q.get('date')) && q.get('date') >= now ? q.get('date') : now);
   }, []);
 
-  const load = () => {
+  // quiet = background refresh: keep the current grid on screen, and keep it if the refresh fails
+  const load = (quiet) => {
     const id = ++req.current; // ignore responses for a court/date the user already left
-    setTaken(null);
+    if (!quiet) setTaken(null);
     fetch(`/api/bookings?court=${court}&date=${date}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then((d) => id === req.current && setTaken({ taken: d.taken ?? [], held: d.held ?? [] }))
-      .catch(() => id === req.current && setTaken('error')); // never show slots as free when we couldn't check
+      .catch(() => id === req.current && setTaken((t) => (quiet && t ? t : 'error'))); // never show slots as free when we couldn't check
   };
   useEffect(() => {
     if (!date) return;
-    setHour(null); setError(null); load();
+    setPick([]); setError(null); load();
     const q = new URLSearchParams(location.search);
     q.set('court', court); q.set('date', date);
     history.replaceState(null, '', `${location.pathname}?${q}${location.hash}`);
+    // pick up other people's requests: every 30s while the tab is visible, and right when it comes back
+    const tick = () => document.visibilityState === 'visible' && load(true);
+    const timer = setInterval(tick, 30_000);
+    document.addEventListener('visibilitychange', tick);
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', tick); };
   }, [court, date]);
+
+  const isFree = (h) => taken?.taken && !taken.taken.includes(h) && !taken.held.includes(h);
+  // someone else grabbed a picked hour since the last refresh
+  useEffect(() => {
+    if (taken?.taken && pick.some((h) => !isFree(h))) {
+      setPick([]);
+      setError('Someone just booked that time. Pick another.');
+    }
+  }, [taken]);
+
+  // tap = pick that hour; tapping a free hour right next to a single pick extends it (max MAX_HOURS, never split)
+  const toggle = (h) => {
+    setError(null);
+    setPick((p) => p.includes(h) ? p.filter((x) => x !== h)
+      : p.length && p.length < MAX_HOURS && (h === p[0] - 1 || h === p.at(-1) + 1) ? [...p, h].sort((a, b) => a - b)
+      : [h]);
+  };
 
   // the strip shows the 7-day block (counted from today) that holds the selected date
   const { offset, start, days: week } = t && date ? weekOf(t, date) : { offset: 0, start: null, days: [] };
@@ -57,13 +80,13 @@ export default function Booker() {
       const res = await fetch('/api/bookings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, court, date, hour }),
+        body: JSON.stringify({ ...form, court, date, hours: pick }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        setDone({ court, date, hour, name: form.name, phone: form.phone, ref: data.ref });
+        setDone({ court, date, hours: pick, name: form.name, phone: form.phone, ref: data.ref });
         e.target.reset();
-        setHour(null);
+        setPick([]);
       } else {
         setError(data.error || 'Couldn’t send your request. Try again in a moment.');
       }
@@ -109,7 +132,7 @@ export default function Booker() {
         <input type="date" name="date" value={date ?? ''} min={t ?? undefined} onChange={(e) => e.target.value >= t && setDate(e.target.value)} />
       </label>
 
-      <p className="label">Time <span className="muted">· 1&nbsp;hour, {PRICE[court]}</span></p>
+      <p className="label">Time <span className="muted">· {PRICE[court]}, up to {MAX_HOURS}&nbsp;hours in a row</span></p>
       <div aria-live="polite">
         {taken === null ? (
           <div className="slots" aria-busy="true" aria-label="Loading times…">
@@ -124,9 +147,10 @@ export default function Booker() {
           <div className="slots" role="group" aria-label="Start time">
             {open.map((h) => {
               // held = someone requested it and owes the deposit; it may free up again
-              const label = taken.taken.includes(h) ? 'Taken' : taken.held.includes(h) ? 'On hold' : null;
+              const label = taken.taken.includes(h) ? 'Taken' : taken.held.includes(h) ? 'On hold'
+                : pick.length === 1 && Math.abs(h - pick[0]) === 1 ? '+1 hour' : null;
               return (
-                <button key={h} type="button" disabled={!!label} aria-pressed={hour === h} onClick={() => setHour(h)}>
+                <button key={h} type="button" disabled={!isFree(h)} aria-pressed={pick.includes(h)} onClick={() => toggle(h)}>
                   {fmtHour(h)}
                   {label && <small>{label}</small>}
                 </button>
@@ -138,7 +162,7 @@ export default function Booker() {
 
       {error && <p className="err" role="alert">{error}</p>}
 
-      {hour !== null && (
+      {pick.length > 0 && (
         <form onSubmit={submit} className="form">
           <label>Name<input name="name" required maxLength={100} autoComplete="name" placeholder="Your full name…" /></label>
           <label>Phone<input name="phone" type="tel" inputMode="tel" required pattern="[+\d\s\-]{7,20}" autoComplete="tel" placeholder="98XXXXXXXX…" /></label>
@@ -146,7 +170,7 @@ export default function Booker() {
             <input name="email" type="email" autoComplete="email" spellCheck={false} placeholder="you@example.com…" />
           </label>
           <button className="btn big" disabled={busy}>
-            {busy ? 'Sending…' : `Request ${fmtHour(hour)}`}
+            {busy ? 'Sending…' : `Request ${fmtSpan(pick)}`}
           </button>
         </form>
       )}

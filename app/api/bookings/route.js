@@ -1,7 +1,7 @@
 import { after } from 'next/server';
 import { sql } from '@/lib/db';
 import { notifyAdmins } from '@/lib/push';
-import { COURTS, OPEN_HOUR, CLOSE_HOUR, TZ, fmtHour, bookingRef } from '@/lib/config';
+import { COURTS, OPEN_HOUR, CLOSE_HOUR, MAX_HOURS, TZ, fmtSpan, bookingRef } from '@/lib/config';
 import { dayLabel } from '@/lib/dates';
 
 const isDate = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d) && !isNaN(Date.parse(d));
@@ -24,29 +24,32 @@ export async function POST(req) {
   const name = String(b.name ?? '').trim();
   const phone = String(b.phone ?? '').trim();
   const email = String(b.email ?? '').trim() || null;
-  const hour = Number(b.hour);
+  const hrs = [...new Set([b.hours].flat().map(Number))].sort((x, y) => x - y);
   const today = new Date().toLocaleDateString('en-CA', { timeZone: TZ });
 
   if (!COURTS[b.court]) return bad('Pick a court');
   if (!isDate(b.date) || b.date < today) return bad('Pick today or a later date');
-  if (!Number.isInteger(hour) || hour < OPEN_HOUR || hour >= CLOSE_HOUR) return bad('Pick one of the open time slots');
+  if (!hrs.length || !hrs.every((h) => Number.isInteger(h) && h >= OPEN_HOUR && h < CLOSE_HOUR)) return bad('Pick one of the open time slots');
+  if (hrs.length > MAX_HOURS || hrs.some((h, i) => i && h !== hrs[i - 1] + 1)) return bad(`Pick up to ${MAX_HOURS} hours in a row`);
   if (!name || name.length > 100) return bad('Enter your name');
   if (!/^[+\d\s-]{7,20}$/.test(phone)) return bad('Enter a phone number using digits, spaces, + or -');
   if (email && (email.length > 200 || !email.includes('@'))) return bad('Enter a valid email, or leave it blank');
 
   let id;
   try {
-    [{ id }] = await sql`insert into bookings (court, date, hour, name, phone, email)
-                         values (${b.court}, ${b.date}, ${hour}, ${name}, ${phone}, ${email}) returning id`;
+    // one statement = every hour or none
+    const rows = await sql`insert into bookings (court, date, hour, name, phone, email)
+                           select ${b.court}, ${b.date}, h, ${name}, ${phone}, ${email} from unnest(${hrs}::int[]) h returning id`;
+    id = Math.min(...rows.map((r) => r.id));
   } catch (e) {
-    if (e.code === '23505') return bad('That slot was just taken. Pick another time.', 409);
+    if (e.code === '23505') return bad('That time was just taken. Pick another time.', 409);
     throw e;
   }
   // ping the admin app after the customer already has their answer
   after(() => notifyAdmins({
-    title: `New request ${bookingRef(id)}: ${COURTS[b.court]}, ${fmtHour(hour)}`,
+    title: `New request ${bookingRef(id)}: ${COURTS[b.court]}, ${fmtSpan(hrs)}`,
     body: `${name} · ${dayLabel(b.date, { weekday: 'short', month: 'short', day: 'numeric' })} · approve once the deposit screenshot arrives`,
-    url: `/admin?${new URLSearchParams({ court: b.court, date: b.date, hour })}#detail`,
+    url: `/admin?${new URLSearchParams({ court: b.court, date: b.date, hour: hrs[0] })}#detail`,
   }));
   return Response.json({ ok: true, ref: bookingRef(id) }, { status: 201 });
 }

@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { COURTS, DEPOSIT, RATE, PAY_QR, WHATSAPP, rs, fmtHour, waLink } from '@/lib/config';
+import { COURTS, DEPOSIT, RATE, PAY_QR, WHATSAPP, rs, fmtSpan, waLink } from '@/lib/config';
 import { longDate } from '@/lib/dates';
 
 // "Pay to confirm" step after a request. Proof of payment goes to the venue on WhatsApp, so the layout follows the device:
@@ -8,7 +8,7 @@ import { longDate } from '@/lib/dates';
 // computer: scan the payment QR with the phone, then scan a second QR that opens WhatsApp *on the phone* (where the screenshot is).
 // Which half shows is decided in CSS (.on-phone / .on-desk via pointer + hover media queries), not by sniffing the user agent.
 export default function PayDeposit({ done }) {
-  const when = `${longDate(done.date)}, ${fmtHour(done.hour)} - ${fmtHour(done.hour + 1)}`;
+  const when = `${longDate(done.date)}, ${fmtSpan(done.hours)}`;
   // same text for the phone button and the desktop QR; name + phone let the admin match it even if sent from another number
   const message = `Hi Match & Meals, here is my ${rs(DEPOSIT)} deposit for booking ${done.ref}: ${COURTS[done.court]}, ${when}.\nName: ${done.name}\nPhone: ${done.phone}`;
   const wa = WHATSAPP && waLink(WHATSAPP, message);
@@ -28,7 +28,7 @@ export default function PayDeposit({ done }) {
   return (
     <div className="popup-body pay">
       <h2>Pay {rs(DEPOSIT)} to Confirm</h2>
-      <p>Your slot is on hold, {done.name}. Pay the deposit, then send us the screenshot.</p>
+      <p>Your time is on hold, {done.name}. Pay the deposit, then send us the screenshot.</p>
       <p className="ref">Booking code <strong translate="no">{done.ref}</strong></p>
 
       <ol className="pay-steps">
@@ -56,7 +56,7 @@ export default function PayDeposit({ done }) {
         <dt>Court</dt><dd>{COURTS[done.court]}</dd>
         <dt>When</dt><dd>{when}</dd>
         <dt>Deposit now</dt><dd>{rs(DEPOSIT)}</dd>
-        <dt>At the counter</dt><dd>{rs(RATE - DEPOSIT)}</dd>
+        <dt>At the counter</dt><dd>{rs(RATE * done.hours.length - DEPOSIT)}</dd>
       </dl>
       <p className="note">We confirm once the screenshot arrives.</p>
       <form method="dialog"><button className="btn big">Done</button></form>

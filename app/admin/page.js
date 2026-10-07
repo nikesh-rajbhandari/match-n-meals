@@ -1,8 +1,11 @@
 import Link from 'next/link';
 import { cookies } from 'next/headers';
 import { revalidatePath } from 'next/cache';
+import { after } from 'next/server';
 import { redirect } from 'next/navigation';
 import { sql } from '@/lib/db';
+import { notifyAdmins } from '@/lib/push';
+import NepaliDate from 'nepali-date-converter';
 import { COURTS, OPEN_HOUR, CLOSE_HOUR, TZ, DEPOSIT, RATE, hours, fmtHour, rs, bookingRef, waLink, waNumber } from '@/lib/config';
 import { today, hourNow, isDate, addDays, dayLabel, longDate, weekOf } from '@/lib/dates';
 import Icon from '@/app/Icon';
@@ -11,6 +14,8 @@ import ConfirmButton from './ConfirmButton';
 import Notifications from './Notifications';
 import Notice from './Notice';
 import HourBoard from './HourBoard';
+import Refresher from './Refresher';
+import PasswordInput from './PasswordInput';
 
 export const dynamic = 'force-dynamic';
 
@@ -87,6 +92,12 @@ async function addBooking(form) {
                 select ${f.court}, ${f.date}, h, ${name}, ${phone}, ${email}, 'approved'
                 from unnest(${picked}::int[]) h`;
       msg = `Booked ${name}, ${spans(picked)}`; err = false;
+      // tell the other admins' devices; this one already knows
+      after(() => notifyAdmins({
+        title: `Booked by admin: ${COURTS[f.court]}, ${spans(picked)}`,
+        body: `${name} · ${shortDay(f.date)}`,
+        url: `/admin?${new URLSearchParams({ court: f.court, date: f.date, hour: picked[0] })}#detail`,
+      }, String(f.push ?? '')));
     } catch (e) {
       if (e.code !== '23505') throw e;
       msg = 'One of those hours was just taken. Pick a different hour.';
@@ -105,6 +116,12 @@ const spans = (hs) => hs.reduce((out, h) => {
 
 const stampFmt = new Intl.DateTimeFormat('en-US', { timeZone: TZ, dateStyle: 'medium', timeStyle: 'short' });
 const shortDay = (d) => dayLabel(d, { weekday: 'short', month: 'short', day: 'numeric' });
+// Bikram Sambat (Nepali calendar), shown next to the English date: '2026-10-07' -> "21 Aswin 2083".
+// Built from local date parts so the server's timezone can't shift the day.
+const bs = (d, fmt = 'D MMMM YYYY') => {
+  const [y, m, day] = d.split('-').map(Number);
+  return NepaliDate.fromAD(new Date(y, m - 1, day)).format(fmt);
+};
 
 // "12 min ago" / "3 h ago" / "2 d ago"; requests older than STALE_H get a nudge (we can't know if the screenshot was sent)
 const STALE_H = 2;
@@ -132,7 +149,8 @@ export default async function Admin({ searchParams }) {
           <h1>Admin</h1>
           <form action={login} className="form">
             {/* autoFocus: the only field on the page */}
-            <label>Password<input name="password" type="password" required autoFocus autoComplete="current-password" aria-describedby={q.bad ? 'login-err' : undefined} /></label>
+            <label htmlFor="password">Password</label>
+            <PasswordInput id="password" name="password" required autoFocus autoComplete="current-password" aria-describedby={q.bad ? 'login-err' : undefined} />
             {q.bad && <p className="err" id="login-err" role="alert">Wrong password. Try again.</p>}
             <button className="btn big">Log In</button>
           </form>
@@ -184,6 +202,7 @@ export default async function Admin({ searchParams }) {
         <form action={logout}><button className="btn ghost">Log Out</button></form>
       </div>
 
+      <Refresher />
       <Notifications />
       {(q.msg || q.err) && <Notice key={q.msg || q.err} text={q.msg || q.err} error={!!q.err} />}
 
@@ -195,7 +214,7 @@ export default async function Admin({ searchParams }) {
           {pending.map((b) => (
             <li key={b.id} className="request">
               <Link href={`/admin?${new URLSearchParams({ court: b.court, date: b.day, hour: b.hour })}#detail`} className="request-when">
-                <strong>{shortDay(b.day)}, {fmtHour(b.hour)}</strong>
+                <strong>{shortDay(b.day)}, {fmtHour(b.hour)} <small className="bs">{bs(b.day, 'D MMMM')}</small></strong>
                 <span><Icon name={b.court} /> {COURTS[b.court]} · <b translate="no">{bookingRef(b.id)}</b></span>
               </Link>
               <div className="request-who">
@@ -243,7 +262,7 @@ export default async function Admin({ searchParams }) {
           </nav>
 
           <div className="week-head">
-            <p className="label">{longDate(date)}</p>
+            <p className="label">{longDate(date)}<small className="bs">{bs(date)}</small></p>
             <div className="week-nav">
               {date !== t && <Link className="today" href={href({ date: t })}>Today</Link>}
               <Link aria-label="Previous week" href={href({ date: addDays(start, -7) })}><span aria-hidden="true">←</span></Link>
@@ -252,9 +271,10 @@ export default async function Admin({ searchParams }) {
           </div>
           <nav className="days" aria-label="Day">
             {days.map((d) => (
-              <Link key={d} href={href({ date: d })} aria-current={date === d ? 'page' : undefined} aria-label={longDate(d)}>
+              <Link key={d} href={href({ date: d })} aria-current={date === d ? 'page' : undefined} aria-label={`${longDate(d)} (${bs(d)})`}>
                 <small>{d === t ? 'Today' : dayLabel(d, { weekday: 'short' })}</small>
                 <strong>{dayLabel(d, { day: 'numeric' })}</strong>
+                <small className="bs">{bs(d, bs(d, 'D') === '1' ? 'MMM D' : 'D')}</small>
               </Link>
             ))}
           </nav>

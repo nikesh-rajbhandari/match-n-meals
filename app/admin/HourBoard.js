@@ -1,11 +1,11 @@
 'use client';
 import Link from 'next/link';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { fmtHour } from '@/lib/config';
 
-// 13 -> "1:00 - 2:00 PM"; AM/PM shown once unless the block crosses noon ("11:00 AM - 12:00 PM")
+// 13 -> "1 - 2 PM"; AM/PM shown once unless the block crosses noon ("11 AM - 12 PM"). Short enough for two chips per row.
 const hourSpan = (h) => {
-  const [a, b] = [fmtHour(h), fmtHour(h + 1)];
+  const [a, b] = [fmtHour(h), fmtHour(h + 1)].map((t) => t.replace(':00', ''));
   return a.slice(-2) === b.slice(-2) ? `${a.slice(0, -3)} - ${b}` : `${a} - ${b}`;
 };
 
@@ -14,6 +14,13 @@ const hourSpan = (h) => {
 export default function HourBoard({ children, slots, query, selected, detail, addAction, back, courtLabel, court, date }) {
   const [picked, setPicked] = useState(() => (selected !== null && !detail ? [selected] : []));
   const panel = useRef(null);
+  // this device's push endpoint, so the "new booking" push skips the admin who made it
+  const [push, setPush] = useState('');
+  useEffect(() => {
+    navigator.serviceWorker?.getRegistration('/admin')
+      .then((reg) => reg?.pushManager?.getSubscription())
+      .then((sub) => setPush(sub?.endpoint ?? '')).catch(() => {});
+  }, []);
 
   const toggle = (h) => {
     const next = picked.includes(h) ? picked.filter((x) => x !== h) : [...picked, h].sort((a, b) => a - b);
@@ -58,6 +65,7 @@ export default function HourBoard({ children, slots, query, selected, detail, ad
             <input type="hidden" name="back" value={back} />
             <input type="hidden" name="court" value={court} />
             <input type="hidden" name="date" value={date} />
+            <input type="hidden" name="push" value={push} />
             <label>Name<input name="name" required maxLength={100} autoComplete="off" placeholder="Customer name…" /></label>
             <label>Phone<input name="phone" type="tel" inputMode="tel" required maxLength={20} autoComplete="off" placeholder="98XXXXXXXX…" /></label>
             <fieldset className="hour-picks">

@@ -270,7 +270,7 @@ input::placeholder { color: var(--muted); }
 .hour-picks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin: 20px 0 0; padding: 0; border: 0; min-width: 0; }
 .hour-picks legend { padding: 0; margin-bottom: 8px; font-weight: 600; font-size: .95rem; }
 .pick { position: relative; display: grid; place-items: center; margin: 0; padding: 10px 6px; min-height: 44px; border: 1px solid var(--line);
-  border-radius: 10px; background: var(--surface); font-weight: 500; font-size: .85rem; line-height: 1.2; text-align: center; text-wrap: balance;
+  border-radius: 10px; background: var(--surface); font-weight: 500; font-size: .85rem; line-height: 1.2; text-align: center; white-space: nowrap;
   font-variant-numeric: tabular-nums; cursor: pointer; transition: border-color .15s, background .15s, color .15s; }
 .pick:hover { border-color: var(--accent); }
 .pick:has(:checked) { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); }
@@ -284,3 +284,30 @@ input::placeholder { color: var(--muted); }
   .schedule { grid-template-columns: minmax(0, 1fr); }
   .slot-detail { position: static; }
 }
+
+/* admin pull-to-refresh (installed app only): a round pill follows the finger down; the arrow flips once a release will refresh */
+.ptr { position: fixed; z-index: 20; top: calc(env(safe-area-inset-top) + 8px); left: calc(50% - 20px); width: 40px; height: 40px;
+  display: grid; place-items: center; border-radius: 50%; background: var(--surface); color: var(--accent); box-shadow: var(--shadow);
+  transform: translateY(-64px); pointer-events: none; transition: transform .3s var(--ease); }
+.ptr.pulling { transition: none; }
+.ptr span { transition: transform .2s var(--ease); }
+.ptr[data-ready="true"] span { transform: rotate(180deg); }
+.ptr.busy { transform: translateY(0); }
+.ptr.busy span { visibility: hidden; }
+.ptr.busy::after { content: ""; position: absolute; width: 18px; height: 18px; border: 2px solid currentColor; border-right-color: transparent;
+  border-radius: 50%; animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .ptr, .ptr span { transition: none; } .ptr.busy::after { animation-duration: 2s; } }
+
+/* password field: eye toggle inside the right edge of the input */
+.pw { position: relative; }
+.pw input { margin-top: 0; padding-right: 48px; }
+.pw button { position: absolute; top: 50%; right: 4px; translate: 0 -50%; display: grid; place-items: center; width: 40px; height: 40px;
+  padding: 0; border: 0; border-radius: 999px; background: none; color: var(--muted); cursor: pointer; }
+.pw button:hover { color: var(--ink); }
+.pw button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* Nepali (BS) date beside the English one in the admin */
+.label .bs { display: block; font-weight: 400; font-size: .85rem; color: var(--muted); }
+.request-when .bs { font-weight: 400; color: var(--muted); white-space: nowrap; }
+.days .bs { font-size: .68rem; font-variant-numeric: tabular-nums; }
