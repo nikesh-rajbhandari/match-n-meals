@@ -1,15 +1,16 @@
 import Link from 'next/link';
 import { sql } from '@/lib/db';
-import { COURTS, rs, spans, bookingRef, waLink, waNumber } from '@/lib/config';
+import { COURTS, TZ, rs, spans, bookingRef, waLink, waNumber } from '@/lib/config';
 import { today, isDate, addDays, dayLabel, shortDay, stampFmt } from '@/lib/dates';
-import { summarize, STATE } from '@/lib/money';
+import { summarize, collectedBy, STATE } from '@/lib/money';
 import { bs, billKey } from '@/lib/admin';
 import Icon from '@/app/Icon';
 import ConfirmButton from './ConfirmButton';
 import Popup from './Popup';
 import DayPicker from './DayPicker';
 import PaymentForm from './PaymentForm';
-import { recordPayment, unconfirmPayment, refund, removeEntry } from './payment-actions';
+import History from './History';
+import { recordPayment, unconfirmPayment, refund, undoRefund, cancelBill, markNoShow, undoNoShow } from './payment-actions';
 
 const KIND = { payment: 'Payment', discount: 'Discount', refund: 'Refund' };
 const METHOD = { cash: 'Cash', qr: 'QR' };
@@ -43,8 +44,9 @@ const codes = (b) => b.refs.map(bookingRef).join(', ');
 const waBalance = (b, due) => waLink(waNumber(b.phone),
   `Hi ${b.name}, this is Match & Meals about your booking${b.refs.length > 1 ? 's' : ''} ${codes(b)} (${COURTS[b.court]}, ${shortDay(b.day)}). Please pay the remaining ${rs(due)} at the counter. Thank you!`);
 
-export default async function Payments({ q }) {
-  const period = PERIODS[q.period] ? q.period : 'week';
+// owner: also show each bill's History and the money-taken-by-staff table
+export default async function Payments({ q, owner }) {
+  const period = PERIODS[q.period] ? q.period : 'day'; // default: today
   const t = today();
   const date = isDate(q.date) ? q.date : t;
   const show = SHOW[q.show] ? q.show : 'open';
@@ -57,12 +59,14 @@ export default async function Payments({ q }) {
     return `/admin?${p}`;
   };
 
-  // pending requests haven't paid anything yet: they stay on the Bookings tab
+  // pending and rejected requests haven't paid anything: they stay on the Bookings tab
   const byRef = await sql`
     select coalesce(ref, id) as ref, min(court) as court, min(date)::text as day, min(name) as name, min(phone) as phone,
-      coalesce(array_agg(hour order by hour) filter (where status <> 'cancelled'), array_agg(hour order by hour)) as hours,
-      coalesce(sum(rate) filter (where status <> 'cancelled'), 0)::int as total
-    from bookings where date between ${start} and ${end} and status <> 'pending' and (${court} = 'all' or court = ${court})
+      coalesce(array_agg(hour order by hour) filter (where status = 'approved'), array_agg(hour order by hour)) as hours,
+      coalesce(sum(rate) filter (where status = 'approved'), 0)::int as total,
+      bool_or(status = 'no_show') as no_show, bool_and(date + (hour + 1) * interval '1 hour' <= now() at time zone ${TZ}) as ended,
+      max(changed_by) filter (where status in ('cancelled', 'no_show')) as cancelled_by
+    from bookings where date between ${start} and ${end} and status in ('approved', 'cancelled', 'no_show') and (${court} = 'all' or court = ${court})
     group by coalesce(ref, id) order by day, min(hour)`;
   // one row per bill: the same customer's bookings on one court and day are paid together (see moneyFor)
   const rows = Object.values(byRef.reduce((o, b) => ((o[billKey(b)] ??= []).push(b), o), {})).map((g) => {
@@ -70,16 +74,22 @@ export default async function Payments({ q }) {
     return {
       ...g[0], ref: Math.min(...g.map((b) => b.ref)), refs: g.map((b) => b.ref).sort((a, b) => a - b),
       hours: [...new Set((live.length ? live : g).flatMap((b) => b.hours))].sort((a, b) => a - b),
-      total: g.reduce((s, b) => s + b.total, 0),
+      total: g.reduce((s, b) => s + b.total, 0), cancelled_by: g.find((b) => b.cancelled_by)?.cancelled_by,
+      no_show: g.some((b) => b.no_show), ended: g.every((b) => b.ended),
     };
   });
   const entries = rows.length
     ? await sql`select * from payments where ref = any(${byRef.map((r) => r.ref)}::int[]) order by created_at` : [];
+  const acts = rows.length && owner
+    ? await sql`select * from activity where ref = any(${byRef.map((r) => r.ref)}::int[]) order by at, id` : [];
   const all = rows.map((b) => {
     const mine = entries.filter((e) => b.refs.includes(e.ref));
-    return { ...b, entries: mine, m: summarize(b, mine) };
+    return { ...b, entries: mine, history: acts.filter((a) => b.refs.includes(a.ref)), m: summarize(b, mine) };
   }).filter((b) => b.m.state !== 'cancelled'); // cancelled with no money left on it: nothing to track
 
+  // who collected the money these bookings kept (owners only); Everyone always equals Collected. See collectedBy.
+  const taken = !owner ? [] : Object.entries(collectedBy(all)).map(([who, m]) => ({ who, ...m })).sort((a, b) => a.who.localeCompare(b.who));
+  const drawer = taken.reduce((t, r) => ({ cash: t.cash + r.cash, qr: t.qr + r.qr }), { cash: 0, qr: 0 });
   const sum = (f) => all.reduce((s, b) => s + f(b.m), 0);
   const held = sum((m) => m.held);
   const list = all.filter((b) => show === 'all' || OPEN.includes(b.m.state) === (show === 'open'));
@@ -128,6 +138,24 @@ export default async function Payments({ q }) {
       </dl>
       <p className="muted pay-basis">By booking date. Collected includes deposits held on cancelled bookings.</p>
 
+      {taken.length > 0 && (
+        <div className="pay-staff">
+          <table>
+            <caption>Who collected it</caption>
+            <thead><tr><th scope="col">Staff</th><th scope="col">Cash</th><th scope="col">QR</th><th scope="col">Total</th></tr></thead>
+            <tbody>
+              {taken.map((r) => (
+                <tr key={r.who}><th scope="row" className="clip">{r.who}</th><td>{rs(r.cash)}</td><td>{rs(r.qr)}</td><td>{rs(r.cash + r.qr)}</td></tr>
+              ))}
+            </tbody>
+            {taken.length > 1 && (
+              <tfoot><tr><th scope="row">Everyone</th><td>{rs(drawer.cash)}</td><td>{rs(drawer.qr)}</td><td>{rs(drawer.cash + drawer.qr)}</td></tr></tfoot>
+            )}
+          </table>
+          <p className="muted">For the bookings on this page, so Everyone matches Collected. A refund comes off the payment it gives back.</p>
+        </div>
+      )}
+
       <nav className="chips" aria-label="Show">
         {Object.entries(SHOW).map(([k, l]) => (
           <Link key={k} href={href({ show: k })} aria-current={show === k ? 'page' : undefined}>{l}</Link>
@@ -140,8 +168,10 @@ export default async function Payments({ q }) {
         <ul className="requests">
           {list.map((b) => {
             const { m } = b, refundable = Math.max(m.held, -m.due);
-            const pct = b.entries.find((e) => e.kind === 'discount')?.note?.match(/^[\d.]+%/)?.[0]; // see recordPayment
-            const lastPaid = b.entries.findLast((e) => e.kind === 'payment'); // what Unconfirm Payment removes
+            const live = b.entries.filter((e) => !e.voided_at);
+            const pct = live.find((e) => e.kind === 'discount')?.note?.match(/^[\d.]+%/)?.[0]; // see recordPayment
+            const lastPaid = live.findLast((e) => e.kind === 'payment'); // what Unconfirm Payment voids
+            const lastRefund = live.findLast((e) => e.kind === 'refund'); // what Undo Refund voids
             return (
               <li key={b.ref} id={`pay-${b.ref}`} className="request pay-row">
                 <Link href={`/admin?${new URLSearchParams({ court: b.court, date: b.day, hour: b.hours[0] })}#detail`} className="request-when">
@@ -170,26 +200,62 @@ export default async function Payments({ q }) {
                         message={`Unconfirm the ${rs(lastPaid.amount)} payment on ${bookingRef(b.ref)}? It goes back to due.`}>Unconfirm Payment</ConfirmButton>
                     </form>
                   ))}
+                  {lastRefund && (
+                    <form action={undoRefund}>
+                      <Back to={b.ref} /><input type="hidden" name="ref" value={b.ref} />
+                      <ConfirmButton className="btn small ghost danger"
+                        message={`Undo the ${rs(lastRefund.amount)} refund on ${bookingRef(b.ref)}? It stays on the bill, crossed out.`}>Undo Refund</ConfirmButton>
+                    </form>
+                  )}
+                  {b.ended && m.due > 0 && (
+                    <form action={markNoShow}>
+                      <Back to={b.ref} /><input type="hidden" name="ref" value={b.ref} />
+                      <ConfirmButton className="btn small ghost danger"
+                        message={`Mark ${codes(b)} (${spans(b.hours)}, ${shortDay(b.day)}) as a no-show? ${m.paid ? `The ${rs(m.paid)} paid is kept and` : 'Nothing was paid, and'} nothing more is owed.`}>
+                        No-show
+                      </ConfirmButton>
+                    </form>
+                  )}
+                  {m.state === 'noshow' && (
+                    <form action={undoNoShow}>
+                      <Back to={b.ref} /><input type="hidden" name="ref" value={b.ref} />
+                      <ConfirmButton className="btn small ghost"
+                        message={`Undo the no-show on ${codes(b)}? The booking is approved again and what’s left is due.`}>Undo No-show</ConfirmButton>
+                    </form>
+                  )}
+                  {m.state === 'unpaid' && (
+                    <form action={cancelBill}>
+                      <Back to={b.ref} /><input type="hidden" name="ref" value={b.ref} />
+                      <ConfirmButton className="btn small ghost danger"
+                        message={`Cancel ${codes(b)} (${spans(b.hours)}, ${shortDay(b.day)})? Nothing has been paid. The slot is freed and the booking stays listed on the Bookings tab.`}>
+                        Cancel Booking
+                      </ConfirmButton>
+                    </form>
+                  )}
                 </div>
 
-                {/* the price breakdown, always shown: total, each deduction (✕ undoes a mistyped one), what's left */}
+                {/* the price breakdown, always shown: total, each entry with who made it (undone ones struck through), what's left */}
                 <ul className="pay-bill">
-                  <li><span>Total{!m.total && ' (cancelled)'}</span><b>{rs(m.total)}</b></li>
-                  {b.entries.map((e) => (
-                    <li key={e.id} title={stampFmt.format(new Date(e.created_at))}>
-                      <span className="clip">{line(e)}</span>
-                      <b>{e.kind === 'refund' ? '+' : '−'}{rs(e.amount)}</b>
-                      <form action={removeEntry}>
-                        <Back to={b.ref} /><input type="hidden" name="id" value={e.id} />
-                        <ConfirmButton className="x" aria-label={`Remove ${line(e)}, ${rs(e.amount)}`}
-                          message={`Remove this ${rs(e.amount)} ${e.kind} from ${bookingRef(b.ref)}?`}>✕</ConfirmButton>
-                      </form>
+                  <li><span>Total{!m.total && ` (${m.state === 'noshow' ? 'no-show' : 'cancelled'}${b.cancelled_by ? `, marked by ${b.cancelled_by}` : ''})`}</span><b>{rs(m.total)}</b></li>
+                  {/* plain amounts, the label says which way the money went; only a discount (off the price) gets a minus.
+                      A closed bill (cancelled / no-show) has no price, so no discount. */}
+                  {b.entries.filter((e) => m.total || e.kind !== 'discount').map((e) => (
+                    <li key={e.id} className={e.voided_at ? 'voided' : undefined} title={stampFmt.format(new Date(e.created_at))}>
+                      <span>
+                        <span className="clip">{line(e)}{e.created_by && <small> · by {e.created_by}</small>}</span>
+                        {e.voided_at && <small className="clip">
+                          {{ discount: 'Replaced', refund: 'Undone' }[e.kind] ?? 'Unconfirmed'}{e.voided_by && ` by ${e.voided_by}`}, {stampFmt.format(new Date(e.voided_at))}
+                        </small>}
+                      </span>
+                      <b>{e.voided_at ? <s>{rs(e.amount)}</s> : `${e.kind === 'discount' ? '−' : ''}${rs(e.amount)}`}</b>
                     </li>
                   ))}
                   <li className="payable">
-                    <span>{!m.total ? 'Held' : m.due < 0 ? 'Owe back' : 'Total payable'}</span><b>{rs(!m.total ? m.held : Math.abs(m.due))}</b>
+                    <span>{m.state === 'noshow' ? 'Kept' : !m.total ? 'Held' : m.due < 0 ? 'Owe back' : 'Total payable'}</span>
+                    <b>{rs(m.state === 'noshow' ? m.paid : !m.total ? m.held : Math.abs(m.due))}</b>
                   </li>
                 </ul>
+                <History entries={b.history} />
                 {refundable > 0 && (
                   <form action={refund} className="pay-form" autoComplete="off">
                     <Back to={b.ref} /><input type="hidden" name="ref" value={b.ref} />

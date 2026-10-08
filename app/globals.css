@@ -215,6 +215,7 @@ input::placeholder { color: var(--muted); }
 .login { max-width: 420px; padding-top: 80px; }
 .admin-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 24px; }
 .admin-head h1 { margin: 0; }
+.admin-head .who { display: grid; min-width: 0; }
 .admin-h { display: flex; align-items: center; gap: 10px; font-size: 1.25rem; margin: 32px 0 12px; }
 .admin-tools { display: flex; align-items: center; gap: 8px; }
 /* round icon buttons in the admin header (notifications bell, test) */
@@ -280,6 +281,10 @@ input::placeholder { color: var(--muted); }
 .swatch { width: 14px; height: 14px; border-radius: 4px; border: 1px solid var(--line); background: var(--surface); }
 .swatch.pending, .slot.pending { border: 1px dashed var(--muted); background: var(--raised); }
 .swatch.approved, .slot.approved { border-color: transparent; background: var(--accent-soft); }
+/* blocked hours (maintenance, events): hatched, so they read as closed rather than booked */
+.swatch.blocked, .slot.blocked { border: 1px solid var(--line); background: repeating-linear-gradient(135deg, var(--raised) 0 6px, var(--surface) 6px 12px); }
+.slot.blocked small { color: var(--muted); }
+.status.blocked { background: var(--raised); color: var(--ink); border: 1px solid var(--line); }
 .admin-slots { grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); }
 .admin-slots .slot { display: grid; gap: 2px; padding: 8px 10px; text-align: left; min-width: 0; }
 .slot-time { white-space: nowrap; font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -299,6 +304,7 @@ input::placeholder { color: var(--muted); }
 .slot-detail dd { margin: 0; font-weight: 500; }
 .slot-detail dd a { text-decoration: none; }
 .slot-detail .form > label:first-of-type { margin-top: 12px; }
+.slot-detail .form > .seg { margin-bottom: 4px; }
 .slot-detail .actions .btn { padding: 10px 22px; }
 .hour-picks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin: 20px 0 0; padding: 0; border: 0; min-width: 0; }
 .hour-picks legend { padding: 0; margin-bottom: 8px; font-weight: 600; font-size: .95rem; }
@@ -313,6 +319,32 @@ input::placeholder { color: var(--muted); }
 .status { padding: 2px 10px; border-radius: 999px; font-size: .75rem; font-weight: 600; }
 .status.pending { background: var(--surface); color: var(--ink); border: 1px dashed var(--muted); }
 .status.approved { background: var(--accent-soft); color: var(--ink); }
+.status.disabled { background: var(--raised); color: var(--muted); }
+/* History (app/admin/History.js): a booking's activity log, folded until opened; corrections stand out */
+.history { grid-column: 1 / -1; margin-top: 12px; font-size: .85rem; }
+.history summary { cursor: pointer; font-weight: 600; width: fit-content; border-radius: 6px; }
+.history summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.history .fix-count, .history .fix-tag { color: var(--danger); font-weight: 600; }
+.history ol { list-style: none; margin: 8px 0 0; padding: 0 0 0 12px; border-left: 2px solid var(--line); display: grid; gap: 6px; }
+.history li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 10px; }
+.history li.fix { border-left: 2px solid var(--danger); margin-left: -14px; padding-left: 12px; }
+.history time { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+@media (max-width: 480px) { .history li { grid-template-columns: minmax(0, 1fr); } }
+
+/* Bookings tab: the day's cancelled and rejected bookings, kept for the record */
+.gone { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-variant-numeric: tabular-nums; }
+.gone li { display: grid; grid-template-columns: 5.5em minmax(0, 1fr) auto; gap: 4px 12px; align-items: baseline;
+  padding: 10px 14px; border-radius: 10px; background: var(--raised); }
+.gone a { color: inherit; }
+.admin-h small { font-size: .9rem; font-weight: 400; }
+@media (max-width: 560px) { .gone li { grid-template-columns: 5em minmax(0, 1fr); } .gone li small { grid-column: 2; } }
+.staff-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 0 32px; align-items: start; }
+@media (max-width: 900px) { .staff-grid { grid-template-columns: minmax(0, 1fr); } }
+.staff-row { grid-template-columns: minmax(0, 1fr) auto; gap: 12px 16px; }
+.staff-badges { display: flex; flex-wrap: wrap; justify-content: end; gap: 6px; }
+.staff-row .actions { grid-column: 1 / -1; flex-wrap: wrap; }
+@media (max-width: 640px) { .staff-row .actions > :not(dialog) { flex: 1 1 auto; } }
+.form .hint { display: block; margin-top: 6px; }
 @media (max-width: 900px) {
   .schedule { grid-template-columns: minmax(0, 1fr); }
   .slot-detail { position: static; }
@@ -360,6 +392,16 @@ input::placeholder { color: var(--muted); }
 .pay-totals dd { margin: 2px 0 0; font-size: 1.2rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 .pay-totals .held dd { color: var(--danger); }
 .pay-basis { margin: 0 0 16px; font-size: .8rem; }
+/* money taken by staff, cash vs QR: the end-of-day drawer check */
+.pay-staff { margin: 0 0 16px; padding: 12px 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); overflow-x: auto; }
+.pay-staff table { width: 100%; border-collapse: collapse; font-size: .9rem; font-variant-numeric: tabular-nums; }
+.pay-staff caption { text-align: left; font-weight: 600; padding-bottom: 6px; }
+.pay-staff th, .pay-staff td { padding: 6px 8px; text-align: right; }
+.pay-staff th[scope="row"], .pay-staff thead th:first-child { text-align: left; max-width: 12em; }
+.pay-staff thead th { color: var(--muted); font-size: .8rem; font-weight: 600; }
+.pay-staff tbody tr + tr, .pay-staff tfoot tr { border-top: 1px solid var(--line); }
+.pay-staff tfoot { font-weight: 700; }
+.pay-staff p { margin: 8px 0 0; font-size: .8rem; }
 .chips { display: flex; gap: 6px; margin-bottom: 12px; }
 .chips a { padding: 6px 14px; border: 1px solid var(--line); border-radius: 999px; color: var(--ink); text-decoration: none; font-size: .9rem; font-weight: 600; }
 .chips a:hover { border-color: var(--accent); }
@@ -393,16 +435,22 @@ input::placeholder { color: var(--muted); }
 .admin-pop .btn:disabled { opacity: .5; cursor: not-allowed; }
 .pay-bill { grid-column: 1 / -1; list-style: none; margin: 0; padding: 10px 0 0; border-top: 1px dashed var(--line); display: grid; gap: 2px;
   font-size: .9rem; font-variant-numeric: tabular-nums; }
-.pay-bill li { display: grid; grid-template-columns: minmax(0, 1fr) auto 32px; gap: 10px; align-items: center; min-height: 32px; }
-.pay-bill li > span { color: var(--muted); }
+.pay-bill li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; min-height: 32px; }
+.pay-bill li > span { min-width: 0; color: var(--muted); }
 .pay-bill li > b { font-weight: 600; text-align: right; }
 .pay-bill .payable { margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 1rem; }
 .pay-bill .payable > * { color: var(--ink); font-weight: 700; }
-.pay-bill .x { width: 32px; height: 32px; padding: 0; border: 0; border-radius: 999px; background: none; color: var(--muted); font: inherit; cursor: pointer; }
-.pay-bill .x:hover, .pay-bill .x:focus-visible { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.pay-bill .voided > span, .pay-bill .voided > b { color: var(--muted); font-weight: 400; }
 .status.unpaid, .status.over, .status.held { background: color-mix(in srgb, var(--danger) 14%, var(--surface)); color: var(--ink); }
 .status.part { background: var(--surface); color: var(--ink); border: 1px dashed var(--muted); }
 .status.paid, .status.refunded { background: var(--accent-soft); color: var(--ink); }
+.status.noshow, .status.no_show, .status.cancelled, .status.rejected { background: var(--raised); color: var(--ink); border: 1px solid var(--line); }
+/* public booking status page (/b/MNM-97) */
+.booking-status dl { display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; margin: 16px 0; padding: 14px 18px; border-radius: 10px; background: var(--raised); }
+.booking-status dt { color: var(--muted); }
+.booking-status dd { margin: 0; font-weight: 600; text-align: right; }
+.booking-status .actions { flex-wrap: wrap; margin-top: 16px; }
+.booking-status .qr { display: block; margin: 0 auto; }
 @media (max-width: 640px) {
   /* phones: when on top, customer left + status right, then the payment button, then the bill */
   .pay-row { grid-template-columns: minmax(0, 1fr) auto; gap: 10px; }

@@ -22,11 +22,24 @@ Set these in `lib/config.js` when ready (until then the QR is a placeholder and 
 2. Create `.env.local`:
    ```
    DATABASE_URL=postgresql://...   # Neon "pooled" connection string
-   ADMIN_PASSWORD=pick-something-long
+   ADMIN_USERNAME=admin                 # username of the permanent owner account (optional, default admin)
+   ADMIN_PASSWORD=pick-something-long   # its password
    ```
 3. `npm install && npm run dev` → http://localhost:3000
+4. Open `/admin` and log in with `ADMIN_USERNAME` / `ADMIN_PASSWORD`. That's the permanent owner: it always uses those two
+   values and can't be edited, disabled or demoted in the app. Add the other staff on the **Staff** tab.
+   Each change on Bookings and Payments records who made it.
+
+### Forgotten passwords
+- **Staff:** an owner opens the **Staff** tab, taps **Edit** on that person, types a **New password** and tells them in person.
+  That also unlocks the account and logs it out on other devices.
+- **Owners:** log in as the permanent owner (`ADMIN_USERNAME` / `ADMIN_PASSWORD`) and reset it the same way.
+- **The permanent owner:** change `ADMIN_PASSWORD` and/or `ADMIN_USERNAME` (`.env.local`, or Vercel project settings then
+  redeploy). The next login with the new values renames the same account (history kept) and signs out every session from
+  before, so changing them also locks out anyone who knew the old ones.
 
 ## Deploy (free)
 1. Push this repo to GitHub.
 2. https://vercel.com/new → import the repo.
-3. Add env vars `DATABASE_URL` and `ADMIN_PASSWORD` → Deploy.
+3. Add env vars `DATABASE_URL`, `ADMIN_USERNAME` (optional) and `ADMIN_PASSWORD` → Deploy. Keep `ADMIN_PASSWORD` long and
+   private: it's the owner key.

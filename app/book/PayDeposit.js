@@ -29,7 +29,7 @@ export default function PayDeposit({ done }) {
     <div className="popup-body pay">
       <h2>Pay {rs(DEPOSIT)} to Confirm</h2>
       <p>Your time is on hold, {done.name}. Pay the deposit, then send us the screenshot.</p>
-      <p className="ref">Booking code <strong translate="no">{done.ref}</strong></p>
+      <p className="ref">Booking code <strong translate="no">{done.ref}</strong> · <a href={`/b/${done.ref}`}>check its status any time</a></p>
 
       <ol className="pay-steps">
         <li>

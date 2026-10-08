@@ -2,6 +2,7 @@
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { fmtHour } from '@/lib/config';
+import SubmitButton from './SubmitButton';
 
 // 13 -> "1 - 2 PM"; AM/PM shown once unless the block crosses noon ("11 AM - 12 PM"). Short enough for two chips per row.
 const hourSpan = (h) => {
@@ -11,8 +12,12 @@ const hourSpan = (h) => {
 
 // The hour grid and the add-booking form share one selection, so they can't drift apart:
 // free hours toggle (grid or chips), booked hours link to their details (rendered by the server as `detail`).
-export default function HourBoard({ children, slots, query, selected, detail, addAction, back, courtLabel, court, date }) {
+export default function HourBoard({ children, slots, query, selected, detail, addAction, back, courtLabel, court, date, canBlock }) {
   const [picked, setPicked] = useState(() => (selected !== null && !detail ? [selected] : []));
+  const [mode, setMode] = useState('book'); // book = walk-in / phone booking; block = maintenance, events (not bookable)
+  const block = mode === 'block';
+  const [weeks, setWeeks] = useState('1'); // repeat weekly: 1 = this day only, up to 4 (regulars, recurring maintenance)
+  const n = Number(weeks);
   const panel = useRef(null);
   // this device's push endpoint, so the "new booking" push skips the admin who made it
   const [push, setPush] = useState('');
@@ -61,14 +66,25 @@ export default function HourBoard({ children, slots, query, selected, detail, ad
       <aside className="slot-detail" id="detail" ref={panel} aria-live="polite">
         {showDetail ? detail : (
           <form action={addAction} className="form" autoComplete="off">
-            <p className="label">{picked.length ? `${recording ? 'Record' : 'Book'} ${courtLabel}` : 'Add a walk-in or phone booking'}</p>
-            {recording && <p className="muted">Some of these hours have passed. Saving records them for your books.</p>}
+            {canBlock && ( // owners only
+              <div className="seg" role="radiogroup" aria-label="Add">
+                <label><input type="radio" name="mode" value="book" checked={!block} onChange={() => setMode('book')} />Booking</label>
+                <label><input type="radio" name="mode" value="block" checked={block} onChange={() => setMode('block')} />Block</label>
+              </div>
+            )}
+            <p className="label">{block ? `Block ${courtLabel}` : picked.length ? `${recording ? 'Record' : 'Book'} ${courtLabel}` : 'Add a walk-in or phone booking'}</p>
+            {block && <p className="muted">For maintenance or events. Customers see these hours as Closed.</p>}
+            {!block && recording && <p className="muted">Some of these hours have passed. Saving records them for your books.</p>}
             <input type="hidden" name="back" value={back} />
             <input type="hidden" name="court" value={court} />
             <input type="hidden" name="date" value={date} />
             <input type="hidden" name="push" value={push} />
-            <label>Name<input name="name" required maxLength={100} autoComplete="off" placeholder="Customer name…" /></label>
-            <label>Phone<input name="phone" type="tel" inputMode="tel" required maxLength={20} autoComplete="off" placeholder="98XXXXXXXX…" /></label>
+            {block ? (
+              <label>Reason<input key="reason" name="name" required maxLength={100} autoComplete="off" placeholder="e.g. Maintenance…" /></label>
+            ) : <>
+              <label>Name<input key="name" name="name" required maxLength={100} autoComplete="off" placeholder="Customer name…" /></label>
+              <label>Phone<input name="phone" type="tel" inputMode="tel" required maxLength={20} autoComplete="off" placeholder="98XXXXXXXX…" /></label>
+            </>}
             <fieldset className="hour-picks">
               <legend>Time <span className="muted">(pick one or more)</span></legend>
               {chips.length ? chips.map(({ h }) => (
@@ -78,10 +94,16 @@ export default function HourBoard({ children, slots, query, selected, detail, ad
                 </label>
               )) : <p className="muted">No free hours left on this day.</p>}
             </fieldset>
-            <label>Email <span className="muted">(optional)</span><input name="email" type="email" autoComplete="off" spellCheck={false} /></label>
-            <button className="btn big" disabled={!picked.length}>
-              {picked.length ? `Add Booking (${picked.length} ${picked.length === 1 ? 'hour' : 'hours'})` : 'Pick an hour first'}
-            </button>
+            <label htmlFor="weeks">Repeat</label>
+            <select id="weeks" name="weeks" value={weeks} onChange={(e) => setWeeks(e.target.value)} aria-describedby="weeks-hint">
+              <option value="1">Don’t repeat (this day only)</option>
+              {[2, 3, 4].map((w) => <option key={w} value={w}>Every week, {w} weeks in total</option>)}
+            </select>
+            <small id="weeks-hint" className="muted hint">Same court and hours each week. Weeks already taken are skipped.</small>
+            <SubmitButton className="btn big" disabled={!picked.length} pendingLabel="Saving…">
+              {!picked.length ? 'Pick an hour first'
+                : `${block ? 'Block' : 'Add Booking'} (${picked.length} ${picked.length === 1 ? 'hour' : 'hours'}${n > 1 ? ` × ${n} weeks` : ''})`}
+            </SubmitButton>
           </form>
         )}
       </aside>

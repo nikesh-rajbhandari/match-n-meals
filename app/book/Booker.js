@@ -33,7 +33,7 @@ export default function Booker() {
     if (!quiet) setTaken(null);
     fetch(`/api/bookings?court=${court}&date=${date}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
-      .then((d) => id === req.current && setTaken({ taken: d.taken ?? [], held: d.held ?? [] }))
+      .then((d) => id === req.current && setTaken({ taken: d.taken ?? [], held: d.held ?? [], closed: d.closed ?? [] }))
       .catch(() => id === req.current && setTaken((t) => (quiet && t ? t : 'error'))); // never show slots as free when we couldn't check
   };
   useEffect(() => {
@@ -49,7 +49,7 @@ export default function Booker() {
     return () => { clearInterval(timer); document.removeEventListener('visibilitychange', tick); };
   }, [court, date]);
 
-  const isFree = (h) => taken?.taken && !taken.taken.includes(h) && !taken.held.includes(h);
+  const isFree = (h) => taken?.taken && ![taken.taken, taken.held, taken.closed].some((l) => l.includes(h));
   // someone else grabbed a picked hour since the last refresh
   useEffect(() => {
     if (taken?.taken && pick.some((h) => !isFree(h))) {
@@ -147,7 +147,7 @@ export default function Booker() {
           <div className="slots" role="group" aria-label="Start time">
             {open.map((h) => {
               // held = someone requested it and owes the deposit; it may free up again
-              const label = taken.taken.includes(h) ? 'Taken' : taken.held.includes(h) ? 'On hold'
+              const label = taken.closed.includes(h) ? 'Closed' : taken.taken.includes(h) ? 'Taken' : taken.held.includes(h) ? 'On hold'
                 : pick.length === 1 && Math.abs(h - pick[0]) === 1 ? '+1 hour' : null;
               return (
                 <button key={h} type="button" disabled={!isFree(h)} aria-pressed={pick.includes(h)} onClick={() => toggle(h)}>
@@ -166,9 +166,6 @@ export default function Booker() {
         <form onSubmit={submit} className="form">
           <label>Name<input name="name" required maxLength={100} autoComplete="name" placeholder="Your full name…" /></label>
           <label>Phone<input name="phone" type="tel" inputMode="tel" required pattern="[+\d\s\-]{7,20}" autoComplete="tel" placeholder="98XXXXXXXX…" /></label>
-          <label>Email <span className="muted">(optional)</span>
-            <input name="email" type="email" autoComplete="email" spellCheck={false} placeholder="you@example.com…" />
-          </label>
           <button className="btn big" disabled={busy}>
             {busy ? 'Sending…' : `Request ${fmtSpan(pick)}`}
           </button>

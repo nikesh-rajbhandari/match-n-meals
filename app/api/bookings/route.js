@@ -1,13 +1,13 @@
 import { after } from 'next/server';
-import { sql } from '@/lib/db';
+import { sql, log } from '@/lib/db';
 import { notifyAdmins } from '@/lib/push';
 import { COURTS, OPEN_HOUR, CLOSE_HOUR, MAX_HOURS, TZ, RATE, fmtSpan, bookingRef } from '@/lib/config';
 import { dayLabel } from '@/lib/dates';
 
 const isDate = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d) && !isNaN(Date.parse(d));
 
-// GET /api/bookings?court=pickleball&date=2026-10-01 -> { taken: [7], held: [9] }
-// taken = approved; held = requested, waiting for the deposit (still not bookable)
+// GET /api/bookings?court=pickleball&date=2026-10-01 -> { taken: [7], held: [9], closed: [12] }
+// taken = approved; held = requested, waiting for the deposit; closed = blocked by the venue. None are bookable.
 export async function GET(req) {
   const { searchParams } = new URL(req.url);
   const court = searchParams.get('court');
@@ -16,14 +16,13 @@ export async function GET(req) {
 
   const rows = await sql`select hour, status from bookings where court = ${court} and date = ${date}`;
   const hoursWhere = (st) => rows.filter((r) => r.status === st).map((r) => r.hour);
-  return Response.json({ taken: hoursWhere('approved'), held: hoursWhere('pending') });
+  return Response.json({ taken: hoursWhere('approved'), held: hoursWhere('pending'), closed: hoursWhere('blocked') });
 }
 
 export async function POST(req) {
   const b = await req.json().catch(() => ({}));
   const name = String(b.name ?? '').trim();
   const phone = String(b.phone ?? '').trim();
-  const email = String(b.email ?? '').trim() || null;
   const hrs = [...new Set([b.hours].flat().map(Number))].sort((x, y) => x - y);
   const today = new Date().toLocaleDateString('en-CA', { timeZone: TZ });
 
@@ -33,18 +32,18 @@ export async function POST(req) {
   if (hrs.length > MAX_HOURS || hrs.some((h, i) => i && h !== hrs[i - 1] + 1)) return bad(`Pick up to ${MAX_HOURS} hours in a row`);
   if (!name || name.length > 100) return bad('Enter your name');
   if (!/^[+\d\s-]{7,20}$/.test(phone)) return bad('Enter a phone number using digits, spaces, + or -');
-  if (email && (email.length > 200 || !email.includes('@'))) return bad('Enter a valid email, or leave it blank');
 
   let id;
   try {
     // one statement = every hour or none
-    const rows = await sql`insert into bookings (court, date, hour, rate, name, phone, email)
-                           select ${b.court}, ${b.date}, h, ${RATE}, ${name}, ${phone}, ${email} from unnest(${hrs}::int[]) h returning id`;
+    const rows = await sql`insert into bookings (court, date, hour, rate, name, phone)
+                           select ${b.court}, ${b.date}, h, ${RATE}, ${name}, ${phone} from unnest(${hrs}::int[]) h returning id`;
     id = Math.min(...rows.map((r) => r.id));
     // ponytail: second statement; if it fails the hours stay ungrouped (ref null, admin reads coalesce(ref, id))
     // rather than failing a booking that already landed
     await sql`update bookings set ref = ${id} where id = any(${rows.map((r) => r.id)}::int[])`
       .catch((e) => console.error('booking ref not set', id, e.message));
+    await log(null, id, `Requested on the website · ${COURTS[b.court]}, ${fmtSpan(hrs)}`);
   } catch (e) {
     if (e.code === '23505') return bad('That time was just taken. Pick another time.', 409);
     throw e;
